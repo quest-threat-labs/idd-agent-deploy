@@ -40,6 +40,17 @@ public sealed class SimulatedTransport : ITargetTransport
     public IReadOnlyCollection<TransportCall> Calls => _calls;
 
     /// <summary>
+    /// Every command passed to <see cref="ExecuteAsync"/>, with its arguments still
+    /// separated.
+    /// </summary>
+    /// <remarks>
+    /// Kept structured rather than rendered so the SEC10 test can assert that an Org ID
+    /// containing shell metacharacters stayed inside a single argument, which is the property
+    /// that makes it inert — asserting on a rendered string would only prove the quoter ran.
+    /// </remarks>
+    public ConcurrentQueue<RemoteCommand> ExecutedCommands { get; } = new();
+
+    /// <summary>
     /// The highest number of per-target sequences observed in flight simultaneously.
     /// </summary>
     /// <remarks>
@@ -106,13 +117,17 @@ public sealed class SimulatedTransport : ITargetTransport
 
     public async Task<ExecutionResult> ExecuteAsync(
         string targetHost,
-        string commandLine,
+        RemoteCommand command,
         TimeSpan timeout,
         CancellationToken ct)
     {
         var host = For(targetHost);
         await host.DelayAsync(host.ExecutionDelay, ct).ConfigureAwait(false);
-        Record(targetHost, DeploymentStage.Execute, commandLine);
+
+        // Recorded as the rendered line so tests can assert on what was run, and separately
+        // as the argument list so they can assert an injection attempt stayed in its slot.
+        ExecutedCommands.Enqueue(command);
+        Record(targetHost, DeploymentStage.Execute, command.ToDisplayString());
 
         if (host.ExecutionTimesOut)
         {

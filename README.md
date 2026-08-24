@@ -82,7 +82,7 @@ travels together.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Core foundation | Complete |
-| 2 | Deployment orchestrator | Not started |
+| 2 | Deployment orchestrator | Complete |
 | 3 | `WinRmSmbTransport` | Not started |
 | 4 | CLI | Not started |
 | 5 | WinForms GUI | Not started |

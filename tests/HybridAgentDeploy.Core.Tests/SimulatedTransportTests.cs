@@ -20,6 +20,14 @@ public sealed class SimulatedTransportTests
     private const string Host = "dc01.corp.local";
     private const string StagingDirectory = @"C:\Windows\Temp\HybridAgentDeploy\run";
 
+    /// <summary>
+    /// A stand-in command. These tests are about transport behaviour, not command content;
+    /// what the orchestrator actually builds is covered by MsiCommandBuilderTests.
+    /// </summary>
+    private static readonly RemoteCommand TestCommand = new(
+        "msiexec",
+        ["/i", @"C:\Windows\Temp\HybridAgentDeploy\run\agent.msi", "/qn"]);
+
     [Fact]
     public async Task An_unconfigured_host_completes_the_whole_sequence_successfully()
     {
@@ -31,7 +39,7 @@ public sealed class SimulatedTransportTests
         Assert.True(staged.Succeeded);
         Assert.Equal(Path.Combine(StagingDirectory, "agent.msi"), staged.StagedPath);
 
-        var executed = await transport.ExecuteAsync(Host, "msiexec ...", TimeSpan.FromMinutes(15), Ct);
+        var executed = await transport.ExecuteAsync(Host, TestCommand, TimeSpan.FromMinutes(15), Ct);
         Assert.True(executed.Launched);
         Assert.Equal(0, executed.ExitCode);
 
@@ -107,7 +115,7 @@ public sealed class SimulatedTransportTests
         var transport = new SimulatedTransport()
             .ConfigureHost(Host, h => h.ReturnsExitCodes(exitCode));
 
-        var result = await transport.ExecuteAsync(Host, "msiexec ...", TimeSpan.FromMinutes(15), Ct);
+        var result = await transport.ExecuteAsync(Host, TestCommand, TimeSpan.FromMinutes(15), Ct);
 
         Assert.True(result.Launched);
         Assert.Equal(exitCode, result.ExitCode);
@@ -127,7 +135,7 @@ public sealed class SimulatedTransportTests
         var codes = new List<int?>();
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            codes.Add((await transport.ExecuteAsync(Host, "msiexec", TimeSpan.FromMinutes(15), Ct)).ExitCode);
+            codes.Add((await transport.ExecuteAsync(Host, TestCommand, TimeSpan.FromMinutes(15), Ct)).ExitCode);
         }
 
         Assert.Equal([1618, 1618, 0], codes);
@@ -141,7 +149,7 @@ public sealed class SimulatedTransportTests
 
         for (var attempt = 0; attempt < 4; attempt++)
         {
-            var result = await transport.ExecuteAsync(Host, "msiexec", TimeSpan.FromMinutes(15), Ct);
+            var result = await transport.ExecuteAsync(Host, TestCommand, TimeSpan.FromMinutes(15), Ct);
             Assert.Equal(1618, result.ExitCode);
         }
     }
@@ -153,7 +161,7 @@ public sealed class SimulatedTransportTests
         var transport = new SimulatedTransport()
             .ConfigureHost(Host, h => h.ExecutionTimesOut = true);
 
-        var result = await transport.ExecuteAsync(Host, "msiexec", TimeSpan.FromMinutes(15), Ct);
+        var result = await transport.ExecuteAsync(Host, TestCommand, TimeSpan.FromMinutes(15), Ct);
 
         Assert.True(result.TimedOut);
         Assert.Null(result.ExitCode);
@@ -168,7 +176,7 @@ public sealed class SimulatedTransportTests
                 ErrorCategory.Connectivity,
                 $"A PowerShell session to {Host} could not be opened on TCP 5985."));
 
-        var result = await transport.ExecuteAsync(Host, "msiexec", TimeSpan.FromMinutes(15), Ct);
+        var result = await transport.ExecuteAsync(Host, TestCommand, TimeSpan.FromMinutes(15), Ct);
 
         Assert.False(result.Launched);
         Assert.Null(result.ExitCode);
@@ -182,7 +190,7 @@ public sealed class SimulatedTransportTests
         var transport = new SimulatedTransport()
             .ConfigureHost(Host, h => h.ExecutionDelay = TimeSpan.FromSeconds(30));
 
-        var execution = transport.ExecuteAsync(Host, "msiexec", TimeSpan.FromMinutes(15), cts.Token);
+        var execution = transport.ExecuteAsync(Host, TestCommand, TimeSpan.FromMinutes(15), cts.Token);
         await cts.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution);
@@ -210,8 +218,8 @@ public sealed class SimulatedTransportTests
             .ConfigureDefault(h => h.ReturnsExitCodes(1603))
             .ConfigureHost("dc02.corp.local", h => h.ReturnsExitCodes(0));
 
-        var unconfigured = await transport.ExecuteAsync("dc50.corp.local", "msiexec", TimeSpan.FromMinutes(15), Ct);
-        var configured = await transport.ExecuteAsync("dc02.corp.local", "msiexec", TimeSpan.FromMinutes(15), Ct);
+        var unconfigured = await transport.ExecuteAsync("dc50.corp.local", TestCommand, TimeSpan.FromMinutes(15), Ct);
+        var configured = await transport.ExecuteAsync("dc02.corp.local", TestCommand, TimeSpan.FromMinutes(15), Ct);
 
         Assert.Equal(1603, unconfigured.ExitCode);
         Assert.Equal(0, configured.ExitCode);
@@ -231,7 +239,7 @@ public sealed class SimulatedTransportTests
         {
             await transport.PreflightAsync(host, Ct);
             await transport.StageFileAsync(host, "agent.msi", StagingDirectory, Ct);
-            await transport.ExecuteAsync(host, "msiexec", TimeSpan.FromMinutes(15), Ct);
+            await transport.ExecuteAsync(host, TestCommand, TimeSpan.FromMinutes(15), Ct);
             await transport.RetrieveFileAsync(host, "install.log", "local.log", Ct);
             await transport.CleanupAsync(host, StagingDirectory, Ct);
         }

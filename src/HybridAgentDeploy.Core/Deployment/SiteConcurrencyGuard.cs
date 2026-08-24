@@ -17,12 +17,14 @@ namespace HybridAgentDeploy.Core.Deployment;
 /// many controllers the site has rather than on how many the operator happened to tick.
 /// </para>
 /// <para>
-/// Targets with no recorded site — every host that arrived by file import, since importing
-/// never contacts Active Directory — share a single bucket and are therefore deployed one at
-/// a time. This is the conservative reading: a site-less target might be the second of two
-/// controllers in a small site and there is no way to tell from the inventory. The cost is
-/// real and the run log states it plainly, because an import-only deployment running at
-/// concurrency one otherwise looks like a hang.
+/// Targets with no recorded site share a single bucket and are deployed one at a time. This
+/// should never occur: every domain controller in the inventory is discovered from Active
+/// Directory, and the directory always knows a controller's site. A site-less target
+/// therefore means the inventory is stale or enumeration was partially degraded — exactly
+/// when caution is warranted, since such a target might be the second of two controllers in a
+/// small site and there is no way to tell. Kept as defence in depth rather than as a routine
+/// path, and the run log states plainly when it engages, because a serialised run otherwise
+/// looks like a hang.
 /// </para>
 /// <para>
 /// Acquired <em>after</em> the global semaphore, as R7.2 specifies: a secondary gate, not a

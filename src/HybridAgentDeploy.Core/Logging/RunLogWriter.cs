@@ -94,6 +94,20 @@ public sealed class RunLogWriter : IAsyncDisposable
         }
 
         builder.AppendLine($"Per-target timeout: {request.PerTargetTimeout.TotalMinutes:0} minutes");
+
+        // What the tool believed about the forest when it acted. Enumeration is an explicit
+        // operator action, so a run can legitimately proceed against an older picture — but
+        // an auditor reading this later needs to know how old it was.
+        if (request.InventoryStatus is { } inventory)
+        {
+            builder.AppendLine($"AD last enumerated: {inventory.Describe(startedUtc)}");
+
+            if (inventory.StalenessWarning(startedUtc) is { } warning)
+            {
+                builder.AppendLine($"                    WARNING {warning}");
+            }
+        }
+
         builder.AppendLine();
         builder.AppendLine("Command template (as executed, with the Org ID in place):");
         builder.AppendLine($"  {commandTemplate}");
@@ -126,11 +140,12 @@ public sealed class RunLogWriter : IAsyncDisposable
             if (string.Equals(site, SiteConcurrencyGuard.UnknownSiteKey, StringComparison.OrdinalIgnoreCase))
             {
                 builder.Append(
-                    " - these targets have no Active Directory site recorded, which is normal " +
-                    "for hosts added by file import. They share one bucket and are therefore " +
-                    "deployed strictly one at a time regardless of the max-parallel setting. " +
-                    "Enumerate from Active Directory to give them site information and let them " +
-                    "run in parallel.");
+                    " - these targets have no Active Directory site recorded, which should not " +
+                    "happen: every domain controller in the inventory is discovered from the " +
+                    "directory, and the directory always knows a controller's site. They share " +
+                    "one bucket and are deployed strictly one at a time regardless of the " +
+                    "max-parallel setting. Re-enumerate from Active Directory to restore site " +
+                    "information and normal concurrency.");
             }
 
             builder.AppendLine();

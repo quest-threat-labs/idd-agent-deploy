@@ -49,6 +49,17 @@ public sealed class DeploymentRequest
     public IReadOnlyDictionary<string, int> ActiveDcsPerSite { get; init; } =
         new Dictionary<string, int>();
 
+    /// <summary>
+    /// How current the inventory was when this run started.
+    /// </summary>
+    /// <remarks>
+    /// Recorded in the run log rather than acted on. Enumeration is an explicit operator
+    /// action, so a deployment can legitimately run against an inventory that is days old —
+    /// but the record of what the tool believed about the forest at the time belongs in the
+    /// log alongside what it did.
+    /// </remarks>
+    public Inventory.InventoryStatus? InventoryStatus { get; init; }
+
     private readonly int _maxParallel = DeploymentLimits.MaxConcurrencyCeiling;
 
     /// <summary>
@@ -89,9 +100,11 @@ public sealed class DeploymentRequest
         bool cloudMode = true,
         int maxParallel = DeploymentLimits.MaxConcurrencyCeiling,
         int timeoutMinutes = DeploymentLimits.DefaultTimeoutMinutes,
-        IReadOnlyDictionary<string, int>? activeDcsPerSite = null) =>
+        IReadOnlyDictionary<string, int>? activeDcsPerSite = null,
+        Inventory.InventoryStatus? inventoryStatus = null) =>
         new()
         {
+            InventoryStatus = inventoryStatus,
             Msi = msi,
             OrgId = orgId,
             Targets = targets,

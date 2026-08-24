@@ -150,9 +150,10 @@ public sealed class OrchestratorTests
     }
 
     /// <summary>
-    /// The consequence of treating site-less targets as one bucket: an import-only deployment
-    /// serialises. Asserted so the behaviour is deliberate and visible rather than discovered
-    /// later as a mystery slowdown.
+    /// Defence in depth for a stale or partially degraded inventory. A site-less target should
+    /// be impossible — every DC comes from Active Directory, which always knows its site — so
+    /// this asserts the fallback both engages and explains itself, rather than presenting as a
+    /// mystery slowdown.
     /// </summary>
     [Fact]
     public async Task Targets_with_no_recorded_site_are_deployed_one_at_a_time()

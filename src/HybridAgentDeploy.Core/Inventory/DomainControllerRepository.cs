@@ -186,6 +186,35 @@ public sealed class DomainControllerRepository
     }
 
     /// <summary>
+    /// How current the inventory is, for the staleness warning shown before a deployment and
+    /// recorded in the run log.
+    /// </summary>
+    /// <remarks>
+    /// The most recent <c>last_seen_utc</c> across AD-sourced rows is when enumeration last
+    /// ran, so no separate bookkeeping table is needed. Scoped to <c>ad_enumeration</c>
+    /// deliberately: only the directory can tell us a domain controller still exists.
+    /// </remarks>
+    public async Task<InventoryStatus> GetStatusAsync(CancellationToken ct)
+    {
+        await using var connection = await _connections.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT COUNT(*), MAX(CASE WHEN source = $source THEN last_seen_utc END) " +
+            "FROM domain_controller WHERE is_active = 1;";
+        command.Parameters.AddWithValue("$source", DbEnums.ToDb(DiscoverySource.AdEnumeration));
+
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        if (!await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            return new InventoryStatus(0, null);
+        }
+
+        return new InventoryStatus(
+            reader.GetInt32(0),
+            reader.IsDBNull(1) ? null : UtcTimestamp.Parse(reader.GetString(1)));
+    }
+
+    /// <summary>
     /// The <c>dc_last_deployment</c> view (PRD 6.1), keyed by DC id. DCs that have never
     /// been deployed to are absent from the result rather than present with nulls.
     /// </summary>

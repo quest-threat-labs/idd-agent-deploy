@@ -58,10 +58,19 @@ public interface ITargetTransport
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The command line always references a path local to the target. Never
+    /// The command always references a path local to the target. Never
     /// <c>msiexec /i \\unc\path</c> inside a remoting session: the local-staging design
     /// exists to avoid the Kerberos double-hop problem and is the single most important
     /// decision in this tool (PRD 5.4). Do not "simplify" it into a UNC execution.
+    /// </para>
+    /// <para>
+    /// <b>Implementations MUST preserve argument boundaries.</b> Pass
+    /// <see cref="RemoteCommand.Arguments"/> through PowerShell native argument passing or
+    /// <c>ProcessStartInfo.ArgumentList</c>. Never join them into a string, and never
+    /// evaluate them through <c>Invoke-Expression</c>, <c>cmd /c</c>, or any other shell —
+    /// the Org ID inside those arguments is untrusted operator input heading for an elevated
+    /// command on a Tier 0 host, and its inertness (SEC10) depends entirely on nothing
+    /// re-parsing it.
     /// </para>
     /// <para>
     /// <see cref="ExecutionResult.ExitCode"/> is the exit code of the executed process, not
@@ -71,7 +80,7 @@ public interface ITargetTransport
     /// </remarks>
     Task<ExecutionResult> ExecuteAsync(
         string targetHost,
-        string commandLine,
+        RemoteCommand command,
         TimeSpan timeout,
         CancellationToken ct);
 

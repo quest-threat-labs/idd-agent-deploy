@@ -48,6 +48,33 @@ HybridAgentDeploy.slnx
 
 `HybridAgentDeploy.Gui` (WinForms) and `HybridAgentDeploy.Cli` arrive in Phases 5 and 4.
 
+## How the inventory works
+
+**Active Directory enumeration is the only way a domain controller enters the inventory.**
+Enumeration is forest-wide and records each DC's site, OS version, RODC flag, and global
+catalog role. It is an explicit operator action — a button in the GUI, `enumerate` in the
+CLI — and the tool warns when the inventory is empty or more than seven days old rather
+than contacting AD on its own.
+
+**Text-file import selects and tags; it does not discover.** A file names domain
+controllers that are already in the inventory so they can be grouped for repeated
+deployment — a pilot ring, a site, the read-only DCs. Entries may be written as an FQDN, a
+NetBIOS name, or an IP address. An entry that matches no known DC is reported with its line
+number and a suggestion to re-enumerate; it is never added to the inventory.
+
+This departs from the literal wording of PRD §6.2, which implies import can create hosts.
+Creating one yields a DC record with no site, no OS version, and an RODC flag defaulted to
+false — a half-populated Tier 0 target assembled from a line of text. It also breaks the
+§R7.2 site guard, which needs a real site to be meaningful. The reasoning is recorded on
+`FileImportService`.
+
+```
+# pilot-ring.txt — first wave, agreed with the AD team
+dc01.corp.local
+dc02.corp.local
+DC07              # NetBIOS names work too
+```
+
 ## Test fixtures
 
 MSI parsing tests need a real MSI. **Do not commit an MSI to this repository** — size and
@@ -82,7 +109,7 @@ travels together.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Core foundation | Complete |
-| 2 | Deployment orchestrator | Not started |
+| 2 | Deployment orchestrator | Complete |
 | 3 | `WinRmSmbTransport` | Not started |
 | 4 | CLI | Not started |
 | 5 | WinForms GUI | Not started |

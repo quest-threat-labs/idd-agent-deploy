@@ -71,6 +71,23 @@ public sealed class OperatorCredential : IDisposable
         }
     }
 
+    /// <summary>
+    /// Runs <paramref name="action"/> with the password still protected.
+    /// </summary>
+    /// <remarks>
+    /// Preferred over <see cref="UsePassword{T}"/> wherever the consuming API accepts a
+    /// <see cref="SecureString"/> — <c>PSCredential</c> does — because it never materialises
+    /// the plaintext at all. The instance handed over is read-only; callers must not dispose
+    /// it, since this object owns its lifetime.
+    /// </remarks>
+    public T UseSecurePassword<T>(Func<SecureString, T> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        return action(_password);
+    }
+
     /// <summary>Returns the account name, never the password.</summary>
     public override string ToString() => AccountName;
 

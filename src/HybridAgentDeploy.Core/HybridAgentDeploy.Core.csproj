@@ -11,6 +11,9 @@
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <PackageReference Include="System.DirectoryServices" Version="10.0.11" />
+    <!-- Remote execution over WinRM (PRD 5.1). Does not tolerate IL trimming or NativeAOT
+         and resolves modules from disk; see PRD 5.3 packaging note and Q4. -->
+    <PackageReference Include="Microsoft.PowerShell.SDK" Version="7.6.5" />
   </ItemGroup>
 
   <ItemGroup>

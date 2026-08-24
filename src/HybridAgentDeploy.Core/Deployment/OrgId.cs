@@ -39,8 +39,14 @@ public static class OrgId
     /// format contains. Their presence is worth flagging to the operator even though it is
     /// harmless here.
     /// </summary>
+    /// <remarks>
+    /// The double quote is absent because it is rejected outright above rather than warned
+    /// about. These remaining characters are inert — nothing downstream is a shell — but are
+    /// still worth flagging, since an identifier containing one is more likely a paste error
+    /// than a real Org ID.
+    /// </remarks>
     private static readonly char[] ShellSignificantCharacters =
-        ['"', '\'', ';', '&', '|', '`', '$', '<', '>', '^', '%', '(', ')', '{', '}'];
+        ['\'', ';', '&', '|', '`', '$', '<', '>', '^', '%', '(', ')', '{', '}'];
 
     public static OrgIdValidation Validate(string? rawValue)
     {
@@ -55,6 +61,26 @@ public static class OrgId
         }
 
         var trimmed = rawValue.Trim();
+
+        // The one character that is rejected rather than warned about (SEC10, which permits
+        // "reject or escape quote characters"). Every other metacharacter is inert: the
+        // command is launched with UseShellExecute = false, so no shell reads it. A double
+        // quote is different — it can close the INSTALLATION_NAME property value and begin a
+        // second property assignment inside msiexec's own parser, altering what is installed
+        // on a domain controller. No plausible tenant identifier contains one.
+        if (trimmed.Contains('"', StringComparison.Ordinal))
+        {
+            return new OrgIdValidation(
+                IsValid: false,
+                Value: null,
+                Error: "The Org ID contains a double-quote character, which cannot be passed " +
+                       "safely to the installer: it would end the INSTALLATION_NAME value and " +
+                       "be read as the start of another installer property. Remove the quote. " +
+                       "If a double-quote is genuinely part of your Org ID, raise it before " +
+                       "deploying — it is not something this utility can pass through safely.",
+                Warnings: []);
+        }
+
         var warnings = new List<string>();
 
         if (!string.Equals(rawValue, trimmed, StringComparison.Ordinal))

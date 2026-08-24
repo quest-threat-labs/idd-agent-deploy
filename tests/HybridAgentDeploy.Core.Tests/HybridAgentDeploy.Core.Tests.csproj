@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <!-- Skippable tests: the MSI parser fixture is located via HAD_TEST_MSI_PATH and an
+         MSI is never committed, so those tests must skip rather than fail where it is unset. -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.85" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\HybridAgentDeploy.Core\HybridAgentDeploy.Core.csproj" />
+    <ProjectReference Include="..\HybridAgentDeploy.Core.Testing\HybridAgentDeploy.Core.Testing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="Xunit.Sdk" />
+  </ItemGroup>
+
+</Project>

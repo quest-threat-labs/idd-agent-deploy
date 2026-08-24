@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    Shared build settings. The Windows-only target framework and x64 platform are
+    deliberate constraints (CLAUDE.md, PRD 5.1): System.DirectoryServices.ActiveDirectory
+    and the msi.dll interop in Core are Windows-only at runtime, and the WinForms GUI
+    added in Phase 5 requires the Windows Desktop targeting pack.
+
+    TargetFramework tracks the highest installed LTS SDK, verified with the `dotnet list-sdks` command.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Product>Hybrid Audit Agent Deployment Utility</Product>
+    <Company>Quest Software</Company>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+</Project>

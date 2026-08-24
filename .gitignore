@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+publish/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.user
+*.suo
+
+# Test results
+TestResults/
+*.trx
+coverage*.xml
+
+# Local runtime artifacts — never commit an inventory database or a run log
+*.db
+*.db-wal
+*.db-shm
+logs/
+
+# Test fixtures: MSI packages are never committed (size and licensing).
+# Point HAD_TEST_MSI_PATH at a local copy instead.
+*.msi

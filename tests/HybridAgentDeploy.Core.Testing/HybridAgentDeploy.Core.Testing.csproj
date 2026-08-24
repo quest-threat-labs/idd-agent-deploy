@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Test support only. SimulatedTransport lives here rather than in Core so that a
+    configurable fake transport is never present in the signed binary that runs against
+    domain controllers. Referenced by the test projects; never by Core, Cli, or Gui.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\HybridAgentDeploy.Core\HybridAgentDeploy.Core.csproj" />
+  </ItemGroup>
+
+</Project>

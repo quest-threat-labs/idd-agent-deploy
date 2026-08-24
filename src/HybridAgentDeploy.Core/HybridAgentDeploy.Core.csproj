@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    HARD RULE (CLAUDE.md, PRD 5.2): this assembly MUST NOT reference System.Windows.Forms.
+    All orchestration, validation, and state transitions live here and are unit-testable
+    without a window. UseWindowsForms is deliberately absent and must stay absent.
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <PackageReference Include="System.DirectoryServices" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Inventory\Migrations\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="HybridAgentDeploy.Core.Tests" />
+  </ItemGroup>
+
+</Project>

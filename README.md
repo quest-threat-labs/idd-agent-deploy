@@ -22,7 +22,7 @@ are Windows-only at runtime.
 ```powershell
 dotnet build
 dotnet test --filter "Category!=Integration"    # default test run
-dotnet test --filter "Category=Integration"     # requires a domain-joined machine
+dotnet test --filter "Category=Integration"     # requires a lab forest; see below
 ```
 
 Targets `net10.0-windows`, x64. Verify with `dotnet --list-sdks`.
@@ -87,6 +87,26 @@ $env:HAD_TEST_MSI_PATH = 'C:\path\to\Quest Change Auditor Agent (x64).msi'
 When it is unset those tests skip with a message naming the variable. Any valid MSI
 exercises the parser; the real agent MSI is only needed to sanity-check property values.
 
+### Lab tests
+
+The `WinRmSmbTransport` tests need a domain controller and an account holding local
+administrator rights on it. Point `HAD_TEST_DC` at one:
+
+```powershell
+$env:HAD_TEST_DC = 'dc01.corp.local'
+dotnet test --filter "Category=Integration"
+```
+
+**These tests install nothing.** They exercise pre-flight, SMB staging, remote SHA-256
+verification, retrieval, and cleanup; the execution tests run `cmd /c exit` and `cmd /c
+echo`, which change nothing on the target. Teardown asserts the staging directory is gone,
+so a run that litters a domain controller fails rather than passing quietly.
+
+One test does install the agent — the Phase 3 acceptance test in `EndToEndDeploymentTests`.
+It is gated on `HAD_ALLOW_INSTALL=yes` in addition to `HAD_TEST_DC`, `HAD_TEST_MSI_PATH`,
+and `HAD_TEST_ORG_ID`, so neither a default run nor an ordinary lab run can trigger it by
+accident. Enable it only against a DC that may have software installed on it.
+
 ## Configuration
 
 By default the inventory database and run logs live under
@@ -110,7 +130,7 @@ travels together.
 |---|---|---|
 | 1 | Core foundation | Complete |
 | 2 | Deployment orchestrator | Complete |
-| 3 | `WinRmSmbTransport` | Not started |
+| 3 | `WinRmSmbTransport` | Complete |
 | 4 | CLI | Not started |
 | 5 | WinForms GUI | Not started |
 | 6 | Packaging and signing | Not started |

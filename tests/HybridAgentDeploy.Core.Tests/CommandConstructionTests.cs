@@ -198,17 +198,42 @@ public sealed class OrgIdValidationTests
 
     /// <summary>
     /// PRD 8.3 asks for a warning on characters that would need quoting. Because Q2 leaves
-    /// the format unknown, this must warn rather than block — rejecting could refuse a
-    /// legitimate Org ID with no operator override.
+    /// the format unknown, these warn rather than block — rejecting could refuse a legitimate
+    /// Org ID with no operator override. They are inert in any case: the installer is launched
+    /// with UseShellExecute = false, so nothing downstream is a shell.
     /// </summary>
-    [Fact]
-    public void Shell_metacharacters_warn_but_do_not_block()
+    [Theory]
+    [InlineData("; Stop-Service NTDS; ")]
+    [InlineData("org & whoami")]
+    [InlineData("org | Get-Process")]
+    [InlineData("$(Stop-Service NTDS)")]
+    public void Shell_metacharacters_warn_but_do_not_block(string orgId)
     {
-        var result = OrgId.Validate("\"; Stop-Service NTDS; \"");
+        var result = OrgId.Validate(orgId);
 
         Assert.True(result.IsValid);
         Assert.NotEmpty(result.Warnings);
-        Assert.Contains(result.Warnings, w => w.Contains("cannot affect the command", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The single exception, and the one character SEC10 names. Since the command line must be
+    /// built as a string — Windows PowerShell 5.1 on every supported DC OS has no
+    /// ProcessStartInfo.ArgumentList — a double quote could close the INSTALLATION_NAME value
+    /// and start another installer property, changing what gets installed on a domain
+    /// controller. It cannot spawn a process, but altering the install is bad enough.
+    /// </summary>
+    [Theory]
+    [InlineData("\"; Stop-Service NTDS; \"")]
+    [InlineData("org\"quote")]
+    [InlineData("\" INSTALLREBOOT=Force ")]
+    public void A_double_quote_is_rejected_rather_than_warned_about(string orgId)
+    {
+        var result = OrgId.Validate(orgId);
+
+        Assert.False(result.IsValid);
+        Assert.Null(result.Value);
+        Assert.Contains("double-quote", result.Error!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("INSTALLATION_NAME", result.Error!, StringComparison.Ordinal);
     }
 
     [Fact]

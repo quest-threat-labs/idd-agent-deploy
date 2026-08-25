@@ -36,6 +36,16 @@ internal sealed class DeployTab : UserControl
     /// <summary>Lines shown in the details box; see the text built in BrowseForMsiAsync.</summary>
     private const int DetailLineCount = 6;
 
+    /// <summary>
+    /// The heading over the Org ID box, naming both products.
+    /// </summary>
+    /// <remarks>
+    /// The same field is the Identity Defense tenant GUID in cloud mode and the Change Auditor
+    /// installation name without it. "Org ID" alone told an operator deploying against
+    /// on-premises Change Auditor nothing about what belonged in the box.
+    /// </remarks>
+    private const string OrgIdLabel = @"Quest SMP Organization ID \ Change Auditor Installation Name";
+
     private readonly TextBox _msiPath = new() { ReadOnly = true };
 
     /// <summary>
@@ -141,7 +151,7 @@ internal sealed class DeployTab : UserControl
             "never more than half its controllers.");
 
         _orgId.TextChanged += (_, _) => RefreshSelectionSummary();
-        _cloudMode.CheckedChanged += (_, _) => RefreshSelectionSummary();
+        _cloudMode.CheckedChanged += async (_, _) => await OnCloudModeChangedAsync();
         _password.TextChanged += (_, _) => RefreshSelectionSummary();
         _userName.TextChanged += (_, _) => RefreshSelectionSummary();
 
@@ -167,6 +177,41 @@ internal sealed class DeployTab : UserControl
         RefreshSelectionSummary();
     }
 
+    /// <summary>
+    /// Fills in the remembered Org ID once there is a window to put it in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Here rather than in the constructor. <c>BeginInvoke</c> requires a created handle, and a
+    /// control being constructed does not have one yet — calling it there threw
+    /// <see cref="InvalidOperationException"/> and the application failed to start at all. The
+    /// build was clean and the whole test suite green with that bug present, which is the
+    /// second time on this screen that a startup crash has been invisible to everything except
+    /// launching the thing and looking at it.
+    /// </para>
+    /// <para>
+    /// Queued rather than awaited, and swallowing its own failures: prefilling is a
+    /// convenience, and a database read going wrong must not stop the deployment screen
+    /// appearing.
+    /// </para>
+    /// </remarks>
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+
+        BeginInvoke(async () =>
+        {
+            try
+            {
+                await PrefillOrgIdAsync();
+            }
+            catch (Exception)
+            {
+                // Nothing to recover: the operator types the value, as they did before.
+            }
+        });
+    }
+
     private Control BuildLayout()
     {
         var browse = Ui.Button("Browse...");
@@ -184,7 +229,10 @@ internal sealed class DeployTab : UserControl
         layout.Controls.Add(PackageRow(browse));
         layout.Controls.Add(_msiDetails);
 
-        layout.Controls.Add(Ui.Heading("Org ID"));
+        // Named for both products, because the box takes a different kind of value in each and
+        // "Org ID" alone tells an operator deploying against on-premises Change Auditor
+        // nothing about what belongs in it.
+        layout.Controls.Add(Ui.Heading(OrgIdLabel));
         layout.Controls.Add(Ui.Row(_orgId));
 
         layout.Controls.Add(Ui.Heading("Options"));
@@ -339,6 +387,81 @@ internal sealed class DeployTab : UserControl
         _userName.Enabled = _alternateIdentity.Checked;
         _password.Enabled = _alternateIdentity.Checked;
         RefreshSelectionSummary();
+    }
+
+    /// <summary>The product the cloud-mode checkbox currently selects.</summary>
+    private AgentMode SelectedMode =>
+        _cloudMode.Checked ? AgentMode.IdentityDefense : AgentMode.ChangeAuditor;
+
+    /// <summary>
+    /// Fills the Org ID box with the last value used in the mode now selected.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately does not overwrite something the operator has typed. Prefilling is a
+    /// convenience; silently replacing a value someone entered a moment ago is not.
+    /// </para>
+    /// <para>
+    /// Run on every mode change rather than only at startup, because the two modes take
+    /// different kinds of identifier. Switching the checkbox with the other mode's value still
+    /// in the box is the exact state the mismatch warning exists to catch, and there is no
+    /// sense in the tool creating it.
+    /// </para>
+    /// </remarks>
+    private async Task PrefillOrgIdAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(_orgId.Text))
+        {
+            return;
+        }
+
+        var remembered = await _main.Settings.GetLastOrgIdAsync(SelectedMode, CancellationToken.None);
+
+        if (!string.IsNullOrWhiteSpace(remembered))
+        {
+            _orgId.Text = remembered;
+        }
+    }
+
+    /// <summary>
+    /// Switches which remembered Org ID applies, carrying the current one back to its own mode.
+    /// </summary>
+    /// <remarks>
+    /// Without the hand-back, typing a GUID in cloud mode and then unticking the box would
+    /// discard it. With it, the checkbox can be flipped back and forth and each mode keeps
+    /// the value that belongs to it.
+    /// </remarks>
+    private async Task OnCloudModeChangedAsync()
+    {
+        var previousMode = _cloudMode.Checked ? AgentMode.ChangeAuditor : AgentMode.IdentityDefense;
+        var typed = _orgId.Text;
+
+        if (!string.IsNullOrWhiteSpace(typed))
+        {
+            await _main.Settings.RememberOrgIdAsync(previousMode, typed, CancellationToken.None);
+        }
+
+        _orgId.Text = await _main.Settings.GetLastOrgIdAsync(SelectedMode, CancellationToken.None) ?? string.Empty;
+
+        RefreshSelectionSummary();
+    }
+
+    /// <summary>
+    /// Remembers the Org ID against the mode it is being used in.
+    /// </summary>
+    /// <remarks>
+    /// Called when a run starts, not when one succeeds. A deployment that failed is precisely
+    /// the case where the operator is about to try again, and losing what they typed because
+    /// the run went badly would be the wrong way round.
+    /// </remarks>
+    private async Task RememberOrgIdAsync()
+    {
+        var validation = OrgId.Validate(_orgId.Text, _cloudMode.Checked);
+
+        if (validation.IsValid)
+        {
+            await _main.Settings.RememberOrgIdAsync(SelectedMode, validation.Value, CancellationToken.None);
+        }
     }
 
     private async Task BrowseForMsiAsync()
@@ -502,6 +625,8 @@ internal sealed class DeployTab : UserControl
             activeDcsPerSite: selection.ActiveDcsPerSite,
             inventoryStatus: await _main.DomainControllers.GetStatusAsync(CancellationToken.None));
 
+        await RememberOrgIdAsync();
+
         await _main.Progress.RunValidationAsync(request, credential);
     }
 
@@ -612,6 +737,8 @@ internal sealed class DeployTab : UserControl
             timeoutMinutes: (int)_timeout.Value,
             activeDcsPerSite: selection.ActiveDcsPerSite,
             inventoryStatus: await _main.DomainControllers.GetStatusAsync(CancellationToken.None));
+
+        await RememberOrgIdAsync();
 
         await _main.Progress.RunAsync(request, credential);
     }

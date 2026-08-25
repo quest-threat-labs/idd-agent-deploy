@@ -26,9 +26,12 @@ max-parallel says. That is expected, not a defect — the run log states the lim
 
 **The mode column matters more than it looks.** Four of the five agents are installed for
 on-premises Change Auditor, not for Identity Defense. A cloud-mode deployment to any of them
-is a mode change, which the installer refuses — so the lab gives a live example of that case
-in both directions without arranging anything. Every OS here is Server 2016 or later, so the
-minimum-version check has no negative case in this lab.
+would **migrate** them to the cloud tenant — supported, and one-way. `RnD-DC` gives the other
+case: it is already on Identity Defense and does not move back. So the lab exercises both
+directions of the asymmetry without arranging anything.
+
+Every OS here is Server 2016 or later, so the minimum-version check has no negative case in
+this lab.
 
 ---
 
@@ -140,8 +143,8 @@ messages, and arranging a failure is what the lab is for.
 | Check | Expected |
 |---|---|
 | Select an MSI, tick DCs, leave Org ID empty | Start is disabled; **Validate targets** is enabled. The message names the GUID or the short name depending on the cloud-mode checkbox |
-| Validate with cloud mode **on** | The four root-domain DCs read "wrong mode" in amber; `RnD-DC` reads "ready - reinstall" |
-| Validate with cloud mode **off** | The reverse — `RnD-DC` reads "wrong mode", the other four read "ready - upgrade" |
+| Validate with cloud mode **on** | The four root-domain DCs read "migrates to cloud" in amber; `RnD-DC` reads "ready - reinstall" |
+| Validate with cloud mode **off** | `RnD-DC` reads "stays on cloud" in amber; the other four read "ready - upgrade" — they are already on Change Auditor, so nothing changes mode |
 | Enter `DEFAULT` with cloud mode on | Amber warning naming both controls; Start stays **enabled** |
 | Enter a GUID with cloud mode off | The mirror-image warning; Start stays **enabled** |
 | Click Validate | Confirmation lists the five steps and says plainly that nothing is installed |
@@ -158,7 +161,7 @@ messages, and arranging a failure is what the lab is for.
 
 ## What automated tests already cover
 
-Do not spend manual time re-checking these — 474 automated tests cover them, and the lab
+Do not spend manual time re-checking these — 476 automated tests cover them, and the lab
 tests run against real domain controllers:
 
 - Exit-code mapping for every row of §10.1, including 1618 retry and the 3010/1641 successes.

@@ -89,16 +89,18 @@ public sealed class ValidationIntegrationTests
 
     /// <summary>
     /// The connection mode is read from a real domain controller, and running the same target
-    /// under both settings reports a mismatch under exactly one of them.
+    /// under both settings reports a change under exactly one of them — the correct one for
+    /// the mode that target is actually in.
     /// </summary>
     /// <remarks>
-    /// The point of the test is that the answer flips. Asserting a fixed mode would only work
-    /// against a lab whose agents happen to be installed the way the test was written, and
-    /// would pass just as happily against a validator that returned a constant.
+    /// The point of the test is that the answer flips, and flips the right way. Asserting a
+    /// fixed outcome would only hold against a lab whose agents happen to be installed the way
+    /// the test was written, and would pass just as happily against a validator returning a
+    /// constant.
     /// </remarks>
     [SkippableFact]
     [Trait("Category", "Integration")]
-    public async Task The_connection_mode_is_read_from_the_target_and_a_mismatch_is_detected()
+    public async Task The_connection_mode_is_read_from_the_target_and_drives_the_right_verdict()
     {
         var target = RequireTarget();
         var msi = await RequireMsiAsync();
@@ -109,14 +111,25 @@ public sealed class ValidationIntegrationTests
         Skip.If(
             cloud.InstalledAgent?.Mode is null,
             $"{target} has no agent installed, or its connection mode could not be read, so " +
-            "there is no mode to mismatch against. Install an agent on it to run this test.");
+            "there is no mode to change from. Install an agent on it to run this test.");
 
         // The installed mode does not change between the two runs; the requested one does.
         Assert.Equal(cloud.InstalledAgent!.Mode, onPremises.InstalledAgent!.Mode);
-        Assert.NotEqual(cloud.HasModeMismatch, onPremises.HasModeMismatch);
 
-        var mismatched = cloud.HasModeMismatch ? cloud : onPremises;
-        Assert.Contains("refuses a mode change", mismatched.Summary, StringComparison.Ordinal);
+        if (cloud.InstalledAgent.Mode == AgentMode.ChangeAuditor)
+        {
+            // Cloud mode migrates it; on-premises mode leaves it exactly where it is.
+            Assert.Equal(ModeChange.MigratesToCloud, cloud.ModeChange);
+            Assert.Equal(ModeChange.None, onPremises.ModeChange);
+            Assert.Contains("MIGRATES", cloud.Summary, StringComparison.Ordinal);
+        }
+        else
+        {
+            // Already on the cloud product: cloud mode is a no-op, and the reverse is refused.
+            Assert.Equal(ModeChange.None, cloud.ModeChange);
+            Assert.Equal(ModeChange.NotSupported, onPremises.ModeChange);
+            Assert.Contains("does not move back", onPremises.Summary, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>

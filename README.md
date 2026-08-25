@@ -151,8 +151,9 @@ downgrade the installer will refuse with 1638. The last of those shows amber rat
 green: nothing is wrong with the host, but it is not a target for this package.
 
 **It catches a mode change, which a version comparison alone cannot.** See below — an
-upgrade that moves an agent between the two products fails regardless of which version is
-newer, so the mode outranks the version in the verdict.
+upgrade that moves an agent between the two products changes which one it reports to, or
+fails to move it at all, regardless of which version is newer. The mode outranks the version
+in the verdict for that reason.
 
 **Pacing is identical to a deployment's** — the ceiling of five (R7.1) and the site guard
 (R7.2), which the Progress tab now states in words, because a run deliberately held at two
@@ -186,11 +187,27 @@ condition is `SG AND (SG="1")`, which omission satisfies correctly. Sending `SG=
 been tested against a Change Auditor server, so the tool sends nothing rather than something
 unverified to a Tier 0 host.
 
-**The installer refuses to move an existing agent between the two.** It reads the installed
-mode from `HKLM\SOFTWARE\Quest\ChangeAuditor\Agent\SgConnectionMode` and sets
-`UPGRADE_SG_MISMATCH` when the requested mode differs. Validation reads the same value and
-reports the mismatch before the run, because the fix is the checkbox rather than the package
-— and because a version comparison on its own would call it a perfectly ordinary upgrade.
+**Moving an existing agent between the two is asymmetric.** Per the agent's developer
+documentation:
+
+| Installed | Deployed with | Result |
+|---|---|---|
+| Change Auditor | `SG=1` | **Migrates** to Identity Defense. Supported, and one-way. |
+| Identity Defense | `SG` omitted | Does **not** move back. The run leaves it on Identity Defense. |
+
+Validation reads the installed mode from
+`HKLM\SOFTWARE\Quest\ChangeAuditor\Agent\SgConnectionMode` — the same value the installer
+reads — and reports both cases before the run, because neither is visible from a version
+comparison. A migration is shown amber rather than green: it succeeds, but it changes which
+product a domain controller reports to, and the checkbox driving it defaults to **on**, so it
+can be reached by inaction rather than by decision.
+
+The MSI's `UPGRADE_SG_MISMATCH` property is *not* a refusal, despite the name. Its only
+consumer in the whole package is the condition deciding whether the previously registered
+installation name is carried forward — which is exactly what a migration needs, since a
+Change Auditor installation name is meaningless as an Identity Defense tenant GUID. Nothing
+blocks on it. The unsupported direction comes from the documentation, not from anything the
+package enforces.
 
 **An Org ID that disagrees with the checkbox warns; it never blocks.** Both a GUID and a
 short name are valid Org IDs, so nothing else can tell that the wrong one was pasted — and

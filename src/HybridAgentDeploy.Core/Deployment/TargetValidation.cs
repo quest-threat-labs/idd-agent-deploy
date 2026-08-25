@@ -29,6 +29,46 @@ public enum AgentMode
     Unrecognised,
 }
 
+/// <summary>
+/// What deploying in the selected mode would do to the mode already installed.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Asymmetric.</b> Per the agent's developer documentation, installing with <c>SG=1</c>
+/// over an agent running in Change Auditor mode migrates it to the cloud product. The reverse
+/// does not work: an agent already reporting to Identity Defense is not moved back to Change
+/// Auditor by installing without <c>SG</c>.
+/// </para>
+/// <para>
+/// The MSI corroborates the supported direction rather than contradicting it. Its
+/// <c>UPGRADE_SG_MISMATCH</c> property gates exactly one thing — whether the previously
+/// registered installation name is carried forward — which is precisely what a migration
+/// needs, since a Change Auditor installation name is meaningless as an Identity Defense
+/// tenant GUID. No launch condition, error row, or custom action blocks on it. An earlier
+/// version of this code read the property's name as "the installer refuses a mode change";
+/// it does not.
+/// </para>
+/// <para>
+/// The unsupported direction is therefore taken from the documentation, not from anything
+/// enforced in the package. The utility reports it rather than blocking on it.
+/// </para>
+/// </remarks>
+public enum ModeChange
+{
+    /// <summary>Nothing installed, or the installed mode already matches.</summary>
+    None,
+
+    /// <summary>
+    /// Change Auditor to Identity Defense. Supported — the installer migrates the agent.
+    /// </summary>
+    MigratesToCloud,
+
+    /// <summary>
+    /// Identity Defense to Change Auditor. The agent does not move back this way.
+    /// </summary>
+    NotSupported,
+}
+
 /// <summary>The Change Auditor agent found on a target, if any.</summary>
 /// <param name="Mode">
 /// Null when the agent is installed but its connection mode could not be read — an older
@@ -118,17 +158,30 @@ public sealed class ValidationOutcome
     public TargetOperatingSystem? OperatingSystem { get; init; }
 
     /// <summary>
-    /// True when an agent is installed in a different mode from the one this run would use.
+    /// What this run would do to the mode already installed. See <see cref="ModeChange"/> for
+    /// why the two directions are not equivalent.
     /// </summary>
     /// <remarks>
-    /// The installer detects this itself and sets <c>UPGRADE_SG_MISMATCH</c>, so the
-    /// deployment would fail. Worked out here so the operator learns before the run rather
-    /// than from sixty failed installs — and because the fix is a checkbox, not a package.
+    /// Worked out before the run because both directions are worth knowing about in advance:
+    /// one changes which product a domain controller reports to, and the other will not do
+    /// what the operator asked. Neither is visible from a version comparison.
     /// </remarks>
-    public bool HasModeMismatch =>
-        InstalledAgent?.Mode is { } installed &&
-        installed != AgentMode.Unrecognised &&
-        installed != RequestedMode;
+    public ModeChange ModeChange
+    {
+        get
+        {
+            if (InstalledAgent?.Mode is not { } installed ||
+                installed == AgentMode.Unrecognised ||
+                installed == RequestedMode)
+            {
+                return ModeChange.None;
+            }
+
+            return RequestedMode == AgentMode.IdentityDefense
+                ? ModeChange.MigratesToCloud
+                : ModeChange.NotSupported;
+        }
+    }
 
     public PredictedAction Predicted { get; init; } = PredictedAction.Unknown;
 
@@ -149,26 +202,53 @@ public sealed class ValidationOutcome
     /// </summary>
     /// <remarks>
     /// A target that is reachable but would be refused by the installer is not simply "ready" —
-    /// the prediction belongs in the headline, not buried in a detail column. A mode mismatch
-    /// outranks the version comparison: an upgrade that crosses modes fails regardless of which
-    /// version is newer, so saying "ready - upgrade" would be actively misleading.
+    /// the prediction belongs in the headline, not buried in a detail column. A mode change
+    /// outranks the version comparison in both of its forms: a migration changes which product
+    /// the domain controller reports to, which matters more than which build it lands on, and
+    /// the unsupported direction will not happen at all.
     /// </remarks>
     public string Summary => Passed
-        ? HasModeMismatch
-            ? $"reachable, but the installed agent reports to " +
-              $"{Describe(InstalledAgent!.Mode!.Value)} and this run would install it for " +
-              $"{Describe(RequestedMode)} - the installer refuses a mode change"
-            : Predicted switch
+        ? ModeChange switch
         {
-            PredictedAction.FreshInstall => "ready - fresh install",
-            PredictedAction.Upgrade => $"ready - upgrade from {InstalledAgent?.Version}",
-            PredictedAction.Reinstall => $"ready - would reinstall {InstalledAgent?.Version}",
-            PredictedAction.DowngradeBlocked =>
-                $"reachable, but {InstalledAgent?.Version} is newer - the installer will refuse",
-            _ => $"ready - {InstalledAgent?.Version ?? "the installed version"} could not be " +
-                 "compared with the package",
+            ModeChange.MigratesToCloud =>
+                "ready - MIGRATES from Change Auditor (on-premises) to Identity Defense " +
+                $"(cloud){VersionSuffix}",
+
+            ModeChange.NotSupported =>
+                "reachable, but the agent reports to Identity Defense (cloud) and does not " +
+                "move back to Change Auditor (on-premises) - this run would not change it",
+
+            _ => Predicted switch
+            {
+                PredictedAction.FreshInstall => "ready - fresh install",
+                PredictedAction.Upgrade => $"ready - upgrade from {InstalledAgent?.Version}",
+                PredictedAction.Reinstall => $"ready - would reinstall {InstalledAgent?.Version}",
+                PredictedAction.DowngradeBlocked =>
+                    $"reachable, but {InstalledAgent?.Version} is newer - the installer will refuse",
+                _ => $"ready - {InstalledAgent?.Version ?? "the installed version"} could not be " +
+                     "compared with the package",
+            },
         }
         : Failures[0].Detail;
+
+    /// <summary>
+    /// What the migration does to the version, appended to the migration headline.
+    /// </summary>
+    /// <remarks>
+    /// A migration is also an install of some version, and the operator still needs to know
+    /// which — but it is the smaller of the two facts, so it follows rather than leads. A
+    /// downgrade is called out because the installer would refuse it and the migration would
+    /// not happen either.
+    /// </remarks>
+    private string VersionSuffix => Predicted switch
+    {
+        PredictedAction.Upgrade => $", upgrading from {InstalledAgent?.Version}",
+        PredictedAction.Reinstall => $", staying on {InstalledAgent?.Version}",
+        PredictedAction.DowngradeBlocked =>
+            $" - but {InstalledAgent?.Version} is newer than this package, so the installer " +
+            "will refuse and neither the migration nor the install will happen",
+        _ => string.Empty,
+    };
 
     /// <summary>The product a mode points at, named as the operator knows it.</summary>
     public static string Describe(AgentMode mode) => mode switch
@@ -194,17 +274,30 @@ public sealed class ValidationRunSummary
     public int ProblemCount => Outcomes.Count(o => !o.Passed);
 
     /// <summary>
-    /// Targets that are reachable but where the installer would refuse this deployment.
+    /// Targets that are reachable but where this deployment would not do what was asked.
     /// </summary>
     /// <remarks>
     /// Counted separately because they are neither a failure of the environment nor a green
     /// light. Nothing is wrong with the domain controller; the package or the mode is simply
-    /// not the one to send it. Covers both a blocked downgrade and a mode change.
+    /// not the one to send it. A migration is deliberately <em>not</em> counted here — it is a
+    /// supported operation that succeeds.
     /// </remarks>
     public int WouldBeRefusedCount =>
         Outcomes.Count(o => o.Passed &&
-            (o.Predicted == PredictedAction.DowngradeBlocked || o.HasModeMismatch));
+            (o.Predicted == PredictedAction.DowngradeBlocked ||
+             o.ModeChange == ModeChange.NotSupported));
 
-    /// <summary>Targets where an agent is installed for the other product.</summary>
-    public int ModeMismatchCount => Outcomes.Count(o => o.Passed && o.HasModeMismatch);
+    /// <summary>
+    /// Targets that would be migrated from Change Auditor to Identity Defense.
+    /// </summary>
+    /// <remarks>
+    /// Called out on its own because it is the one supported operation in this tool that
+    /// changes which product a domain controller reports to, and because the checkbox driving
+    /// it defaults to on — so it can be reached by inaction rather than by decision.
+    /// </remarks>
+    public int MigrationCount => Outcomes.Count(o => o.Passed && o.ModeChange == ModeChange.MigratesToCloud);
+
+    /// <summary>Targets already on Identity Defense that this run cannot move back.</summary>
+    public int UnsupportedModeChangeCount =>
+        Outcomes.Count(o => o.Passed && o.ModeChange == ModeChange.NotSupported);
 }

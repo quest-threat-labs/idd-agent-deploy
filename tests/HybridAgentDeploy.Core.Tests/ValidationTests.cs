@@ -305,17 +305,17 @@ public sealed class ValidationTests
     }
 
     // ---------------------------------------------------------------------------------------
-    // Mode. The installer refuses to move an agent between Identity Defense and Change
-    // Auditor, and detects it itself through UPGRADE_SG_MISMATCH.
+    // Mode. The two directions are NOT equivalent: SG=1 over a Change Auditor agent migrates
+    // it to the cloud product, and the reverse does not move it back.
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// The case a version comparison alone gets wrong. An on-premises agent being upgraded by
-    /// a cloud-mode run is a newer version arriving on the target, so the version check says
-    /// "upgrade" and the deployment then fails.
+    /// The supported direction. A migration succeeds, so it is not a refusal — but it changes
+    /// which product a domain controller reports to, and the checkbox driving it defaults to
+    /// on, so it can be reached by inaction rather than by decision.
     /// </summary>
     [Fact]
-    public async Task A_cloud_run_against_an_on_premises_agent_is_flagged_as_a_mode_change()
+    public async Task A_cloud_run_against_an_on_premises_agent_is_reported_as_a_migration()
     {
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h => h.StandardOutput = TargetState(version: "7.4.0.20", mode: "0"));
@@ -324,35 +324,65 @@ public sealed class ValidationTests
 
         var outcome = summary.Outcomes.Single();
 
-        // Every check passes: nothing is wrong with the domain controller.
         Assert.True(outcome.Passed);
-        Assert.True(outcome.HasModeMismatch);
-        Assert.Equal(1, summary.ModeMismatchCount);
-        Assert.Equal(1, summary.WouldBeRefusedCount);
+        Assert.Equal(ModeChange.MigratesToCloud, outcome.ModeChange);
+        Assert.Equal(1, summary.MigrationCount);
 
-        // The version comparison on its own would have said "upgrade", which is why the mode
-        // has to outrank it in the headline.
+        // A migration is a supported operation that succeeds, so it is emphatically not a
+        // refusal, and must not be counted as one.
+        Assert.Equal(0, summary.WouldBeRefusedCount);
+        Assert.Equal(0, summary.UnsupportedModeChangeCount);
+
+        // The migration leads, the version follows: which product the DC reports to afterwards
+        // matters more than which build it lands on.
         Assert.Equal(PredictedAction.Upgrade, outcome.Predicted);
-        Assert.Contains("refuses a mode change", outcome.Summary, StringComparison.Ordinal);
-        Assert.Contains("Change Auditor", outcome.Summary, StringComparison.Ordinal);
+        Assert.Contains("MIGRATES", outcome.Summary, StringComparison.Ordinal);
+        Assert.Contains("upgrading from 7.4.0.20", outcome.Summary, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The unsupported direction. Taken from the agent's developer documentation rather than
+    /// from anything the MSI enforces — its <c>UPGRADE_SG_MISMATCH</c> property only decides
+    /// whether the old installation name is carried forward.
+    /// </summary>
     [Fact]
-    public async Task An_on_premises_run_against_a_cloud_agent_is_flagged_as_a_mode_change()
+    public async Task An_on_premises_run_against_a_cloud_agent_is_reported_as_unsupported()
     {
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h => h.StandardOutput = TargetState(version: "7.4.0.20", mode: "1"));
 
         var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: false);
 
-        Assert.True(summary.Outcomes.Single().HasModeMismatch);
-        Assert.Equal(1, summary.ModeMismatchCount);
+        var outcome = summary.Outcomes.Single();
+        Assert.Equal(ModeChange.NotSupported, outcome.ModeChange);
+        Assert.Equal(1, summary.UnsupportedModeChangeCount);
+        Assert.Equal(1, summary.WouldBeRefusedCount);
+        Assert.Equal(0, summary.MigrationCount);
+        Assert.Contains("does not move back", outcome.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A migration onto an older package is refused for the version, and then the migration
+    /// does not happen either — so the headline has to say both.
+    /// </summary>
+    [Fact]
+    public async Task A_migration_blocked_by_a_newer_installed_version_says_so()
+    {
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(version: "7.9.0.1", mode: "0"));
+
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: true);
+
+        var outcome = summary.Outcomes.Single();
+        Assert.Equal(ModeChange.MigratesToCloud, outcome.ModeChange);
+        Assert.Equal(PredictedAction.DowngradeBlocked, outcome.Predicted);
+        Assert.Contains("neither the migration nor the install", outcome.Summary, StringComparison.Ordinal);
     }
 
     [Theory]
     [InlineData("1", true)]
     [InlineData("0", false)]
-    public async Task A_matching_mode_is_not_a_mismatch(string installedMode, bool cloudMode)
+    public async Task A_matching_mode_is_not_a_mode_change(string installedMode, bool cloudMode)
     {
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h => h.StandardOutput = TargetState(version: "7.4.0.20", mode: installedMode));
@@ -360,28 +390,31 @@ public sealed class ValidationTests
         var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: cloudMode);
 
         var outcome = summary.Outcomes.Single();
-        Assert.False(outcome.HasModeMismatch);
-        Assert.Equal(0, summary.ModeMismatchCount);
+        Assert.Equal(ModeChange.None, outcome.ModeChange);
+        Assert.Equal(0, summary.MigrationCount);
+        Assert.Equal(0, summary.UnsupportedModeChangeCount);
         Assert.Contains("ready - upgrade", outcome.Summary, StringComparison.Ordinal);
     }
 
     /// <summary>
     /// A fresh install cannot be a mode change: there is no installed mode to move away from.
     /// </summary>
-    [Fact]
-    public async Task A_host_with_no_agent_is_never_a_mode_mismatch()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_host_with_no_agent_is_never_a_mode_change(bool cloudMode)
     {
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h => h.StandardOutput = TargetState(agent: "none", mode: "none"));
 
-        var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: false);
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: cloudMode);
 
-        Assert.False(summary.Outcomes.Single().HasModeMismatch);
+        Assert.Equal(ModeChange.None, summary.Outcomes.Single().ModeChange);
     }
 
     /// <summary>
-    /// An agent whose mode cannot be read is not assumed to match. Assuming it does is the
-    /// assumption that produces a failed deployment.
+    /// An agent whose mode cannot be read is not assumed to match, and is not guessed at
+    /// either — the check says plainly that the question is open.
     /// </summary>
     [Fact]
     public async Task An_unreadable_mode_is_reported_rather_than_assumed_to_match()
@@ -392,7 +425,7 @@ public sealed class ValidationTests
         var summary = await RunAsync(transport, [Target("dc01.corp.local")]);
 
         var outcome = summary.Outcomes.Single();
-        Assert.False(outcome.HasModeMismatch);
+        Assert.Equal(ModeChange.None, outcome.ModeChange);
         Assert.Contains(
             outcome.Checks,
             c => c.Name == "Connection mode" && c.Detail.Contains("could not be read", StringComparison.Ordinal));

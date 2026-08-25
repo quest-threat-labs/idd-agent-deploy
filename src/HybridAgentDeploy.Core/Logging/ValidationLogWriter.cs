@@ -90,9 +90,11 @@ public sealed class ValidationLogWriter : IAsyncDisposable
             $"Deployment mode   : {ValidationOutcome.Describe(request.RequestedMode)}" +
             $" ({(request.CloudMode ? "SG=1" : "SG omitted")})");
         builder.AppendLine(
-            "                    The installer refuses an upgrade that moves an agent between");
+            "                    Installing with SG=1 over a Change Auditor agent migrates it to");
         builder.AppendLine(
-            "                    these two products, so each target's current mode is reported.");
+            "                    the cloud product; the reverse does not move it back. Each");
+        builder.AppendLine(
+            "                    target's current mode is therefore reported below.");
         builder.AppendLine();
         builder.AppendLine($"Probe directory   : {probeDirectory}");
         builder.AppendLine(
@@ -189,22 +191,35 @@ public sealed class ValidationLogWriter : IAsyncDisposable
         builder.AppendLine($"Ready             : {summary.ReadyCount}");
         builder.AppendLine($"Problems          : {summary.ProblemCount}");
 
+        if (summary.MigrationCount > 0)
+        {
+            builder.AppendLine($"Would be migrated : {summary.MigrationCount}");
+            builder.AppendLine(
+                "                    These report to on-premises Change Auditor today and would");
+            builder.AppendLine(
+                "                    be moved to the Identity Defense cloud tenant. Supported,");
+            builder.AppendLine(
+                "                    and one-way: the agent does not move back.");
+        }
+
+        if (summary.UnsupportedModeChangeCount > 0)
+        {
+            builder.AppendLine($"Already on cloud  : {summary.UnsupportedModeChangeCount}");
+            builder.AppendLine(
+                "                    These report to Identity Defense. An agent does not move");
+            builder.AppendLine(
+                "                    back to Change Auditor, so this run would not change them.");
+        }
+
         if (summary.WouldBeRefusedCount > 0)
         {
             builder.AppendLine($"Would be refused  : {summary.WouldBeRefusedCount}");
             builder.AppendLine(
-                "                    Reachable and writable, but the installer would refuse this");
+                "                    Reachable and writable, but this deployment would not do");
             builder.AppendLine(
-                "                    deployment - a newer agent is present, or the agent is");
+                "                    what was asked - a newer agent is present, or the mode");
             builder.AppendLine(
-                "                    installed for the other product.");
-        }
-
-        if (summary.ModeMismatchCount > 0)
-        {
-            builder.AppendLine($"Mode mismatch     : {summary.ModeMismatchCount}");
-            builder.AppendLine(
-                "                    The fix is the cloud-mode setting, not the package.");
+                "                    change is not one the agent supports.");
         }
 
         if (summary.WasCancelled)
@@ -238,7 +253,7 @@ public sealed class ValidationLogWriter : IAsyncDisposable
 
         builder.AppendLine(
             "fqdn,site,verdict,predicted_action,installed_version,installed_product_code," +
-            "installed_mode,requested_mode,mode_mismatch,os_build,os_name," +
+            "installed_mode,requested_mode,mode_change,os_build,os_name," +
             "error_category,started_utc,completed_utc,duration_seconds,failed_checks,detail");
 
         foreach (var outcome in summary.Outcomes.OrderBy(o => o.Target.Fqdn, StringComparer.OrdinalIgnoreCase))
@@ -253,7 +268,7 @@ public sealed class ValidationLogWriter : IAsyncDisposable
                 Csv(outcome.InstalledAgent?.ProductCode),
                 Csv(outcome.InstalledAgent?.Mode?.ToString()),
                 Csv(outcome.RequestedMode.ToString()),
-                Csv(outcome.HasModeMismatch ? "yes" : "no"),
+                Csv(outcome.ModeChange.ToString()),
                 Csv(outcome.OperatingSystem?.BuildNumber.ToString(CultureInfo.InvariantCulture)),
                 Csv(outcome.OperatingSystem?.ProductName),
                 Csv(outcome.ErrorCategory?.ToString()),

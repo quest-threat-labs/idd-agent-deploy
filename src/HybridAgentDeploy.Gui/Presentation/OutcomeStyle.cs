@@ -87,11 +87,18 @@ public static class OutcomeStyle
             return new OutcomeAppearance("not ready", FailureBack, FailureFore);
         }
 
-        // Outranks the version comparison: an upgrade that crosses products fails regardless
-        // of which version is newer, so "ready - upgrade" would be actively misleading.
-        if (outcome.HasModeMismatch)
+        // Outranks the version comparison. Amber in both directions, for different reasons: a
+        // migration succeeds but changes which product the domain controller reports to, and
+        // the checkbox driving it defaults to on — so it can be reached by inaction. The other
+        // direction simply will not happen.
+        if (outcome.ModeChange == ModeChange.MigratesToCloud)
         {
-            return new OutcomeAppearance("wrong mode", WarningBack, WarningFore);
+            return new OutcomeAppearance("migrates to cloud", WarningBack, WarningFore);
+        }
+
+        if (outcome.ModeChange == ModeChange.NotSupported)
+        {
+            return new OutcomeAppearance("stays on cloud", WarningBack, WarningFore);
         }
 
         return outcome.Predicted switch

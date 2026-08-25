@@ -1,4 +1,5 @@
 using System.Drawing;
+using HybridAgentDeploy.Core.Deployment;
 using HybridAgentDeploy.Core.Models;
 
 namespace HybridAgentDeploy.Gui.Presentation;
@@ -61,6 +62,44 @@ public static class OutcomeStyle
 
         _ => new OutcomeAppearance(outcome.Value.ToString(), NeutralBack, NeutralFore),
     };
+
+    /// <summary>
+    /// Appearance for one target's validation verdict (PRD 11).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three states, not two. A domain controller that is reachable and writable but already
+    /// carries a newer agent than the selected package is amber: nothing is wrong with the
+    /// host, but deploying to it would return 1638, and a green row invites the operator to
+    /// press Start and discover that the hard way.
+    /// </para>
+    /// <para>
+    /// Distinguished by text as well as colour, for the same reason the deployment outcomes
+    /// are — a screenshot pasted into a ticket has to remain readable.
+    /// </para>
+    /// </remarks>
+    public static OutcomeAppearance ForValidation(ValidationOutcome outcome)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        if (!outcome.Passed)
+        {
+            return new OutcomeAppearance("not ready", FailureBack, FailureFore);
+        }
+
+        return outcome.Predicted switch
+        {
+            PredictedAction.DowngradeBlocked =>
+                new OutcomeAppearance("package refused", WarningBack, WarningFore),
+
+            PredictedAction.Unknown =>
+                new OutcomeAppearance("ready - version unclear", WarningBack, WarningFore),
+
+            PredictedAction.Upgrade => new OutcomeAppearance("ready - upgrade", SuccessBack, SuccessFore),
+            PredictedAction.Reinstall => new OutcomeAppearance("ready - reinstall", SuccessBack, SuccessFore),
+            _ => new OutcomeAppearance("ready - install", SuccessBack, SuccessFore),
+        };
+    }
 
     /// <summary>
     /// Appearance for a target that is mid-deployment, for the progress grid (PRD 8.4).

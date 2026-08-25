@@ -112,8 +112,20 @@ internal sealed class MainForm : Form
     /// <summary>What the operator has ticked, tracked by id so filtering cannot drop it.</summary>
     public SelectionState Selection { get; } = new();
 
-    /// <summary>True while a deployment is running. Gates the Start button (R7.1).</summary>
-    public bool IsDeploying { get; private set; }
+    /// <summary>
+    /// What is currently running against domain controllers — "deployment" or "validation" —
+    /// or null when nothing is.
+    /// </summary>
+    /// <remarks>
+    /// One field for both, because both open sessions to domain controllers under their own
+    /// ceiling of five and running them together would silently make that ten (R7.1). Held as
+    /// the activity's name rather than a boolean so the operator is told which one is in the
+    /// way, which is the difference between a useful disabled button and a mysterious one.
+    /// </remarks>
+    public string? ActivityInFlight { get; private set; }
+
+    /// <summary>True while a deployment or a validation is running.</summary>
+    public bool IsBusy => ActivityInFlight is not null;
 
     public ILogger<T> Logger<T>() => LoggerFactory.CreateLogger<T>();
 
@@ -150,15 +162,19 @@ internal sealed class MainForm : Form
     /// Marks a run as started or finished, and moves the operator to the Progress tab.
     /// </summary>
     /// <remarks>
-    /// The flag is set here and read by <see cref="DeployTab"/>, so there is exactly one place
-    /// that decides whether a second run may begin.
+    /// Set here and read by <see cref="DeployTab"/>, so there is exactly one place that decides
+    /// whether anything else may begin.
     /// </remarks>
-    public void SetDeploying(bool deploying)
+    /// <param name="activity">
+    /// "deployment" or "validation", phrased to drop into a sentence, or null when the run has
+    /// finished.
+    /// </param>
+    public void SetActivity(string? activity)
     {
-        IsDeploying = deploying;
+        ActivityInFlight = activity;
         _deployTab.RefreshSelectionSummary();
 
-        if (deploying)
+        if (activity is not null)
         {
             _tabs.SelectedTab = _progressPage;
         }
@@ -209,20 +225,21 @@ internal sealed class MainForm : Form
     /// Refuses to close while a deployment is in flight.
     /// </summary>
     /// <remarks>
-    /// Closing the window would tear down the orchestrator mid-run, abandoning an msiexec on a
-    /// domain controller without cleanup — exactly what PRD 8.4 forbids. The operator is told
-    /// to cancel instead, which stops new targets and lets in-flight ones finish properly.
+    /// Closing the window would tear down the run mid-flight, leaving an msiexec — or, for a
+    /// validation, a probe directory — on a domain controller without cleanup, exactly what
+    /// PRD 8.4 forbids. The operator is told to cancel instead, which stops new targets and
+    /// lets in-flight ones finish properly.
     /// </remarks>
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (IsDeploying)
+        if (ActivityInFlight is { } activity)
         {
             MessageBox.Show(
                 this,
-                "A deployment is still running. Cancel it on the Progress tab and wait for the " +
-                "targets in flight to finish — closing now would abandon an installation on a " +
-                "domain controller without cleaning up after it.",
-                "Deployment in progress",
+                $"A {activity} is still running. Cancel it on the Progress tab and wait for the " +
+                "targets in flight to finish — closing now would abandon work on a domain " +
+                "controller without cleaning up after it.",
+                $"{char.ToUpperInvariant(activity[0])}{activity[1..]} in progress",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
 

@@ -313,13 +313,66 @@ public sealed class DeploymentFormStateTests
     /// targets, so a second run would silently double the R7.1 ceiling against domain
     /// controllers.
     /// </summary>
-    [Fact]
-    public void A_second_run_cannot_start_while_one_is_in_flight()
+    /// <remarks>
+    /// Both activities are checked, and each blocks the other. A validation opens sessions to
+    /// the same domain controllers under its own ceiling of five, so allowing one to run
+    /// alongside a deployment would make the effective ceiling ten just as surely as a second
+    /// deployment would.
+    /// </remarks>
+    [Theory]
+    [InlineData("deployment")]
+    [InlineData("validation")]
+    public void Nothing_else_can_start_while_a_run_is_in_flight(string activity)
     {
-        var state = Ready with { IsDeploying = true };
+        var state = Ready with { ActivityInFlight = activity };
 
         Assert.False(state.CanStart);
+        Assert.False(state.CanValidate);
         Assert.Contains("already running", state.BlockingReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(activity, state.BlockingReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("already running", state.ValidationBlockingReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Validation does not need an Org ID: no installer runs, so there is nothing for one to
+    /// configure. Requiring one would make an operator invent a value to find out whether
+    /// their domain controllers are reachable — and an invented value is exactly what should
+    /// not be sitting in the box when they later press Start.
+    /// </summary>
+    [Fact]
+    public void Validation_does_not_require_an_org_id()
+    {
+        var state = Ready with { OrgId = null };
+
+        Assert.False(state.CanStart);
+        Assert.True(state.CanValidate);
+        Assert.Null(state.ValidationBlockingReason);
+    }
+
+    [Fact]
+    public void Validation_still_requires_a_package_and_at_least_one_target()
+    {
+        Assert.False((Ready with { Msi = null }).CanValidate);
+        Assert.Contains(
+            "installer package",
+            (Ready with { Msi = null }).ValidationBlockingReason!,
+            StringComparison.OrdinalIgnoreCase);
+
+        Assert.False((Ready with { SelectedTargetCount = 0 }).CanValidate);
+    }
+
+    /// <summary>
+    /// The operator is told plainly that nothing will be installed, before anything opens a
+    /// session to a Tier 0 host.
+    /// </summary>
+    [Fact]
+    public void The_validation_prompt_says_nothing_is_installed()
+    {
+        var prompt = Ready.ValidationPrompt(["dc01.corp.local"], hiddenSelectedCount: 0);
+
+        Assert.Contains("Nothing is installed", prompt, StringComparison.Ordinal);
+        Assert.Contains("msiexec is not run", prompt, StringComparison.Ordinal);
+        Assert.Contains("dc01.corp.local", prompt, StringComparison.Ordinal);
     }
 
     /// <summary>PRD 8.3: if MSI extraction fails, deployment is blocked.</summary>

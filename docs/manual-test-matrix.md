@@ -123,9 +123,30 @@ flight.
 
 ---
 
+## Validate targets
+
+Validation installs nothing, so unlike the matrix above these checks do not change any
+domain controller. Run them in the lab all the same — the point is to see the failure
+messages, and arranging a failure is what the lab is for.
+
+| Check | Expected |
+|---|---|
+| Select an MSI, tick DCs, leave Org ID empty | Start is disabled; **Validate targets** is enabled |
+| Click Validate | Confirmation lists the five steps and says plainly that nothing is installed |
+| During the run | Progress tab shows the pacing line, live per-target stages, and the busy-slot count |
+| After the run | Each row shows ready/upgrade/reinstall against the package's version; `Retry failed targets` stays disabled |
+| A DC already carrying a newer agent | Row is amber, reads "package refused", and the summary says msiexec would return 1638 |
+| A DC the account is not admin on | Row is red at "can stage files", naming the share and the rights needed |
+| Log folder | Contains `validation.log` and `results.csv` in a `…-validate` directory; no new History entry appears |
+| Probe cleanup | `Get-ChildItem \\<dc>\C$\Windows\Temp\HybridAgentDeploy` is empty afterwards, including for the DCs that failed |
+| Cancel mid-run | Dialog wording refers to probe files, not installations; unstarted DCs are reported as not checked |
+| Try to close mid-run | Refused, with an explanation naming the validation |
+
+---
+
 ## What automated tests already cover
 
-Do not spend manual time re-checking these — 351 automated tests cover them, and the lab
+Do not spend manual time re-checking these — 433 automated tests cover them, and the lab
 tests run against real domain controllers:
 
 - Exit-code mapping for every row of §10.1, including 1618 retry and the 3010/1641 successes.

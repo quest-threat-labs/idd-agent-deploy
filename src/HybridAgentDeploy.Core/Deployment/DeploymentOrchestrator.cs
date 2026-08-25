@@ -39,20 +39,6 @@ public sealed class DeploymentOrchestrator
     /// <summary>Attempts for a target returning 1618 (PRD 10.1, 15.1).</summary>
     public const int MaxAttemptsForContendedInstaller = 3;
 
-    /// <summary>
-    /// SEC7: under <c>C:\Windows\Temp</c>, which inherits admin-only ACLs. Never a
-    /// world-readable location, and the ACLs on the staging path are never loosened.
-    /// </summary>
-    private const string StagingRoot = @"C:\Windows\Temp\HybridAgentDeploy";
-
-    /// <summary>
-    /// The per-run staging directory name on each target: the full run GUID, as PRD 5.4
-    /// specifies. Deliberately not the eight-character short form used for the local log
-    /// directory (PRD 12.1) — a directory left behind on a domain controller must be
-    /// traceable to the run that created it without ambiguity (NFR7).
-    /// </summary>
-    private static string StagingDirectoryName(Guid runGuid) => runGuid.ToString("D");
-
     private readonly ITargetTransport _transport;
     private readonly DeploymentRepository _deployments;
     private readonly ILogger<DeploymentOrchestrator> _log;
@@ -93,8 +79,8 @@ public sealed class DeploymentOrchestrator
         // A representative command, built once against a placeholder path, so the run log can
         // record the exact template before any target is touched (PRD 12.2).
         var commandTemplate = MsiCommandBuilder.BuildInstallCommand(
-            Path.Combine(StagingRoot, StagingDirectoryName(runGuid), request.Msi.FileName),
-            Path.Combine(StagingRoot, StagingDirectoryName(runGuid), "install.log"),
+            Path.Combine(StagingPaths.ForRun(runGuid), request.Msi.FileName),
+            Path.Combine(StagingPaths.ForRun(runGuid), "install.log"),
             request.OrgId,
             request.CloudMode).ToDisplayString();
 
@@ -275,7 +261,9 @@ public sealed class DeploymentOrchestrator
         var startedUtc = _time.GetUtcNow();
         var warnings = new List<string>();
 
-        var stagingDirectory = Path.Combine(StagingRoot, StagingDirectoryName(runGuid));
+        // SEC7 and NFR7: admin-only ACLs, and a directory name carrying the full run GUID so
+        // anything left behind on a domain controller is traceable to the run that made it.
+        var stagingDirectory = StagingPaths.ForRun(runGuid);
         var stagedLogPath = Path.Combine(stagingDirectory, "install.log");
         var localLogPath = Path.Combine(request.LogDirectory, $"{target.Fqdn}_install.log");
 

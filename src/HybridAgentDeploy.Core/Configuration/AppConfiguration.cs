@@ -149,6 +149,17 @@ public static class AppConfigurationLoader
         return Path.Combine(logRoot, $"{stamp}-{shortGuid}");
     }
 
+    /// <summary>
+    /// The per-run log directory for a validation, beside the deployment runs.
+    /// </summary>
+    /// <remarks>
+    /// Same timestamped shape so it sorts chronologically alongside them, with a suffix so an
+    /// operator scanning the folder can tell at a glance which directories represent something
+    /// that actually installed an agent on a domain controller and which do not.
+    /// </remarks>
+    public static string ValidationLogDirectory(string logRoot, Guid runGuid, DateTimeOffset startedUtc) =>
+        RunLogDirectory(logRoot, runGuid, startedUtc) + "-validate";
+
     private static string? Resolve(string? configured, string baseDirectory)
     {
         if (string.IsNullOrWhiteSpace(configured))

@@ -112,7 +112,7 @@ public sealed class SimulatedTransport : ITargetTransport
         }
 
         var stagedPath = Path.Combine(remoteDirectory, Path.GetFileName(localPath));
-        return StagingResult.Success(stagedPath, host.StagedSha256);
+        return StagingResult.Success(stagedPath, host.HashToReportFor(localPath));
     }
 
     public async Task<ExecutionResult> ExecuteAsync(
@@ -140,7 +140,7 @@ public sealed class SimulatedTransport : ITargetTransport
             return ExecutionResult.FailedToLaunch(failure.Category, failure.Detail);
         }
 
-        return ExecutionResult.Completed(host.NextExitCode());
+        return ExecutionResult.Completed(host.NextExitCode(), host.StandardOutput);
     }
 
     public async Task<RetrievalResult> RetrieveFileAsync(
@@ -232,8 +232,43 @@ public sealed class SimulatedHost
     /// </summary>
     public bool CleanupThrows { get; set; }
 
-    /// <summary>The hash reported for the staged copy, for exercising SEC6 verification.</summary>
-    public string StagedSha256 { get; set; } = new string('0', 64);
+    /// <summary>
+    /// The hash reported for the staged copy, for exercising SEC6 verification.
+    /// </summary>
+    /// <remarks>
+    /// Setting it simulates a file that arrived altered — or, when it matches the source, one
+    /// that arrived intact. Leaving it null means a healthy host: the source file's real
+    /// SHA-256 is reported when the file exists on disk, and the all-zero placeholder when it
+    /// does not, which is what lets a test use a fictional MSI path without tripping the
+    /// verification it is not trying to exercise.
+    /// </remarks>
+    public string? StagedSha256 { get; set; }
+
+    internal string HashToReportFor(string localPath)
+    {
+        if (StagedSha256 is { } configured)
+        {
+            return configured;
+        }
+
+        if (!File.Exists(localPath))
+        {
+            return new string('0', 64);
+        }
+
+        using var stream = File.OpenRead(localPath);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+    }
+
+    /// <summary>
+    /// What a command that runs to completion writes to standard output.
+    /// </summary>
+    /// <remarks>
+    /// Returned for every execution on this host rather than varying by command. Validation is
+    /// the only caller that reads standard output, and it reads it from exactly one call — the
+    /// installed-agent query — so per-command fidelity would be machinery with no reader.
+    /// </remarks>
+    public string? StandardOutput { get; set; }
 
     public TimeSpan PreflightDelay { get; set; }
     public TimeSpan StagingDelay { get; set; }

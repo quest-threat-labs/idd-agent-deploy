@@ -112,6 +112,18 @@ internal sealed class DeployTab : UserControl
     private readonly Label _blockingReason = new() { ForeColor = Color.FromArgb(140, 20, 30) };
     private readonly Button _start = Ui.Button("Start deployment");
 
+    /// <summary>
+    /// Checks the targets are deployable without deploying to them (PRD 11).
+    /// </summary>
+    /// <remarks>
+    /// Sits beside Start rather than on a screen of its own, because it answers a question the
+    /// operator has while looking at this screen: will this work? Reaching a domain controller,
+    /// writing to it, and starting a process on it are three separate permissions, and a
+    /// deployment that discovers the second one is missing has already copied a 67 MB installer
+    /// to somewhere it could not write.
+    /// </remarks>
+    private readonly Button _validate = Ui.Button("Validate targets");
+
     private MsiPackageInfo? _msi;
 
     public DeployTab(MainForm main)
@@ -137,6 +149,11 @@ internal sealed class DeployTab : UserControl
         _alternateIdentity.CheckedChanged += (_, _) => OnIdentityModeChanged();
 
         _start.Click += async (_, _) => await StartAsync();
+        _validate.Click += async (_, _) => await ValidateAsync();
+
+        tips.SetToolTip(_validate,
+            "Checks each selected domain controller is reachable, that this account can write " +
+            "to it and start a process on it, and which agent it already has. Installs nothing.");
 
         // Sized from the fonts these controls actually render with, not from pixel counts
         // guessed here. See Ui.SizeToContent.
@@ -191,17 +208,38 @@ internal sealed class DeployTab : UserControl
         // leaves the operator with a disabled button and half an explanation.
         _blockingReason.AutoSize = false;
         _blockingReason.Dock = DockStyle.Fill;
-        _blockingReason.TextAlign = ContentAlignment.MiddleLeft;
-        _blockingReason.Padding = new Padding(16, 0, 8, 0);
+        // Top-aligned, not centred: the strip is now sized for three wrapped lines, and a
+        // centred single line would float away from the buttons it belongs to.
+        _blockingReason.TextAlign = ContentAlignment.TopLeft;
+        _blockingReason.Padding = new Padding(16, 4, 8, 0);
 
-        _start.Dock = DockStyle.Left;
-        _start.Margin = new Padding(0);
+        // Validate sits beside Start rather than replacing it as the leftmost control: Start
+        // remains the primary action, and moving it would relocate a button the operator
+        // already knows the position of. Both go in a flow panel so they space themselves by
+        // their own margins and each still sizes to its own text — docking them individually
+        // would butt them together, since Dock ignores Margin.
+        _start.Margin = new Padding(0, 0, 8, 0);
+        _validate.Margin = new Padding(0);
 
-        var actions = new Panel { Dock = DockStyle.Bottom, Height = 58, Padding = new Padding(0, 8, 0, 4) };
+        var buttons = Ui.Row(_start, _validate);
+        buttons.Dock = DockStyle.Left;
 
-        // Fill is added first so the docked button claims its space from the left edge.
+        // Tall enough for three wrapped lines of the reason, measured in the font it renders
+        // with rather than fixed in pixels. The longest of these messages — the one explaining
+        // what an Org ID is for — ran off the right edge at the previous height, which leaves
+        // the operator with two disabled-looking buttons and half a sentence.
+        var reasonLine = TextRenderer.MeasureText("Ag", _blockingReason.Font).Height;
+
+        var actions = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = Math.Max(58, (reasonLine * 3) + 16),
+            Padding = new Padding(0, 8, 0, 4),
+        };
+
+        // Fill is added first so the docked buttons claim their space from the left edge.
         actions.Controls.Add(_blockingReason);
-        actions.Controls.Add(_start);
+        actions.Controls.Add(buttons);
 
         var host = new Panel { Dock = DockStyle.Fill };
         host.Controls.Add(layout);
@@ -370,7 +408,7 @@ internal sealed class DeployTab : UserControl
             Msi = _msi,
             OrgId = _orgId.Text,
             SelectedTargetCount = selected.Count,
-            IsDeploying = _main.IsDeploying,
+            ActivityInFlight = _main.ActivityInFlight,
             AlternateCredentialIncomplete = _alternateIdentity.Checked &&
                 (string.IsNullOrWhiteSpace(_userName.Text) || _password.Text.Length == 0),
         };
@@ -383,6 +421,11 @@ internal sealed class DeployTab : UserControl
         _commandPreview.Text = state.CommandPreview(_cloudMode.Checked);
 
         _start.Enabled = state.CanStart;
+        _validate.Enabled = state.CanValidate;
+
+        // The deployment's reason, which is the longer list: validation needs everything a
+        // deployment needs except the Org ID, so this message always explains the stricter of
+        // the two buttons and never contradicts an enabled Validate beside it.
         _blockingReason.Text = state.BlockingReason ?? string.Empty;
 
         // Warnings on the Org ID are advisory (PRD 8.3) and shown without blocking.
@@ -398,6 +441,100 @@ internal sealed class DeployTab : UserControl
         }
     }
 
+    /// <summary>
+    /// Checks the selected targets without deploying to them (PRD 11).
+    /// </summary>
+    /// <remarks>
+    /// Shares the Progress tab with a deployment. The operator's question — "which of my domain
+    /// controllers are ready?" — has the same shape as "which of them worked?", and answering
+    /// it in a second grid somewhere else would mean two places to learn and two places to
+    /// look.
+    /// </remarks>
+    private async Task ValidateAsync()
+    {
+        var selected = _main.Inventory.Where(r => _main.Selection.IsSelected(r.DcId)).ToList();
+
+        var state = new DeploymentFormState
+        {
+            Msi = _msi,
+            SelectedTargetCount = selected.Count,
+            ActivityInFlight = _main.ActivityInFlight,
+            AlternateCredentialIncomplete = _alternateIdentity.Checked &&
+                (string.IsNullOrWhiteSpace(_userName.Text) || _password.Text.Length == 0),
+        };
+
+        if (!state.CanValidate)
+        {
+            return;
+        }
+
+        var targets = selected.Select(r => new DeploymentTarget(r.DcId, r.Fqdn, r.SiteName)).ToList();
+
+        var hidden = _main.Selection.HiddenSelectedCount(
+            _main.Inventory.Where(r => _main.Selection.IsSelected(r.DcId)));
+
+        var confirmed = MessageBox.Show(
+            this,
+            state.ValidationPrompt([.. targets.Select(t => t.Fqdn)], hidden),
+            "Confirm validation",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question) == DialogResult.Yes;
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        var credential = TakeCredential();
+
+        var selection = await _main.TargetSelector.ResolveAsync([], [], all: true, CancellationToken.None);
+
+        var request = ValidationRequest.Create(
+            msi: _msi!,
+            targets: targets,
+            operatorAccount: credential?.AccountName ?? OperatorCredential.CurrentWindowsAccountName(),
+            logDirectory: AppConfigurationLoader.ValidationLogDirectory(
+                _main.Configuration.LogRootPath, Guid.NewGuid(), DateTimeOffset.UtcNow),
+            maxParallel: (int)_maxParallel.Value,
+            activeDcsPerSite: selection.ActiveDcsPerSite,
+            inventoryStatus: await _main.DomainControllers.GetStatusAsync(CancellationToken.None));
+
+        await _main.Progress.RunValidationAsync(request, credential);
+    }
+
+    /// <summary>
+    /// Builds the alternate-account credential, if one was chosen, and clears the password box.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// SEC1: the password does not linger in a control's buffer once it is held securely for
+    /// the run. Shared by both entry points so neither can forget to do it.
+    /// </para>
+    /// <para>
+    /// This means validating first and then deploying asks for the password twice. That is the
+    /// intended trade: the alternative is leaving it in a text box across an operation that
+    /// may take several minutes, and the Start button says plainly why it is disabled in the
+    /// meantime.
+    /// </para>
+    /// </remarks>
+    private OperatorCredential? TakeCredential()
+    {
+        if (!_alternateIdentity.Checked)
+        {
+            return null;
+        }
+
+        var secure = new SecureString();
+        foreach (var c in _password.Text)
+        {
+            secure.AppendChar(c);
+        }
+
+        var credential = new OperatorCredential(_userName.Text, secure);
+        _password.Clear();
+        return credential;
+    }
+
     private async Task StartAsync()
     {
         var selected = _main.Inventory.Where(r => _main.Selection.IsSelected(r.DcId)).ToList();
@@ -407,7 +544,7 @@ internal sealed class DeployTab : UserControl
             Msi = _msi,
             OrgId = _orgId.Text,
             SelectedTargetCount = selected.Count,
-            IsDeploying = _main.IsDeploying,
+            ActivityInFlight = _main.ActivityInFlight,
         };
 
         if (!state.CanStart)
@@ -455,21 +592,7 @@ internal sealed class DeployTab : UserControl
             return;
         }
 
-        OperatorCredential? credential = null;
-        if (_alternateIdentity.Checked)
-        {
-            var secure = new SecureString();
-            foreach (var c in _password.Text)
-            {
-                secure.AppendChar(c);
-            }
-
-            credential = new OperatorCredential(_userName.Text, secure);
-
-            // SEC1: the password does not linger in a control's buffer once it is held
-            // securely for the run.
-            _password.Clear();
-        }
+        var credential = TakeCredential();
 
         var selection = await _main.TargetSelector.ResolveAsync([], [], all: true, CancellationToken.None);
 

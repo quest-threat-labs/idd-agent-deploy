@@ -31,6 +31,24 @@ internal sealed class ProgressTab : UserControl
 
     private readonly Label _overall = new() { AutoSize = true, Padding = new Padding(8, 8, 0, 0) };
     private readonly Label _slots = new() { AutoSize = true, Padding = new Padding(24, 8, 0, 0) };
+
+    /// <summary>
+    /// How the run is actually paced (PRD R7.1, R7.2).
+    /// </summary>
+    /// <remarks>
+    /// The site guard is otherwise invisible: a selection concentrated in one two-DC site runs
+    /// one at a time however max-parallel is set, and an operator who cannot see why concludes
+    /// the tool has hung. Stated here rather than only in the run log, which is the wrong place
+    /// to answer a question someone has while watching the screen.
+    /// </remarks>
+    private readonly Label _pacing = new()
+    {
+        Dock = DockStyle.Top,
+        AutoSize = true,
+        Padding = new Padding(8, 2, 8, 6),
+        ForeColor = Color.FromArgb(90, 90, 90),
+    };
+
     private readonly Button _cancel = Ui.Button("Cancel");
     private readonly Button _openLogs = Ui.Button("Open log folder");
     private readonly Button _retryFailed = Ui.Button("Retry failed targets");
@@ -47,6 +65,9 @@ internal sealed class ProgressTab : UserControl
     {
         _main = main;
 
+        // The same five columns serve a deployment and a validation. The operator's question is
+        // the same shape either way — which domain controllers are fine and which are not — and
+        // a second grid elsewhere would be a second thing to learn and a second place to look.
         _grid.Columns.Add("fqdn", "Domain controller");
         _grid.Columns.Add("stage", "Stage");
         _grid.Columns.Add("elapsed", "Elapsed");
@@ -72,6 +93,7 @@ internal sealed class ProgressTab : UserControl
         var buttons = Ui.Bar(_cancel, _openLogs, _retryFailed, _overall, _slots);
 
         Controls.Add(_grid);
+        Controls.Add(_pacing);
         Controls.Add(buttons);
     }
 
@@ -86,7 +108,10 @@ internal sealed class ProgressTab : UserControl
         _retryFailed.Enabled = false;
         _lastLogDirectory = request.LogDirectory;
 
-        _main.SetDeploying(true);
+        _pacing.Text = "Pacing: " + new SiteConcurrencyGuard(request.ActiveDcsPerSite)
+            .DescribePacing(request.Targets, request.MaxParallel);
+
+        _main.SetActivity("deployment");
         _elapsedTimer.Start();
 
         try
@@ -115,6 +140,7 @@ internal sealed class ProgressTab : UserControl
         finally
         {
             _elapsedTimer.Stop();
+            MarkAllSlotsFree();
             _cancel.Enabled = false;
             _openLogs.Enabled = _lastLogDirectory is not null;
             _retryFailed.Enabled = _lastSummary?.FailedTargets.Count > 0;
@@ -123,7 +149,7 @@ internal sealed class ProgressTab : UserControl
             _cancellation?.Dispose();
             _cancellation = null;
 
-            _main.SetDeploying(false);
+            _main.SetActivity(null);
 
             // The inventory grid's last-deployed columns are now stale.
             await _main.RefreshInventoryAsync();
@@ -131,20 +157,107 @@ internal sealed class ProgressTab : UserControl
         }
     }
 
-    private void PrepareGrid(DeploymentRequest request)
+    /// <summary>
+    /// Checks a set of targets without deploying to them, and streams the result into the same
+    /// grid (PRD 11).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Runs through <see cref="ValidationRunner"/>, which contains no code able to execute an
+    /// installer. Nothing here can start an msiexec, whatever is wrong with it.
+    /// </para>
+    /// <para>
+    /// Deliberately leaves no deployment history: <c>Retry failed targets</c> is disabled
+    /// afterwards, the inventory's last-deployed columns are untouched, and the History tab is
+    /// not reloaded, because nothing was deployed and none of them have changed.
+    /// </para>
+    /// </remarks>
+    public async Task RunValidationAsync(ValidationRequest request, OperatorCredential? credential)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        PrepareGrid(request.Targets, request.MaxParallel, "checks");
+
+        _cancellation = new CancellationTokenSource();
+        _cancel.Enabled = true;
+        _openLogs.Enabled = false;
+
+        // A validation produces nothing to retry: the failures it reports are conditions on the
+        // domain controllers, not attempts that might succeed if repeated.
+        _retryFailed.Enabled = false;
+        _lastSummary = null;
+        _lastLogDirectory = request.LogDirectory;
+
+        _pacing.Text = "Pacing: " + new SiteConcurrencyGuard(request.ActiveDcsPerSite)
+            .DescribePacing(request.Targets, request.MaxParallel);
+
+        _main.SetActivity("validation");
+        _elapsedTimer.Start();
+
+        try
+        {
+            var transport = new WinRmSmbTransport(
+                new TransportOptions { Credential = credential },
+                _main.Logger<WinRmSmbTransport>());
+
+            var runner = new ValidationRunner(transport, _main.Logger<ValidationRunner>());
+
+            // Constructed here, on the UI thread, so callbacks marshal back to it.
+            var progress = new Progress<ValidationProgress>(OnValidationProgress);
+
+            var summary = await runner.ValidateAsync(request, progress, _cancellation.Token);
+
+            RenderValidationOutcomes(summary);
+            ShowValidationMessage(summary);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Validation failed",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _elapsedTimer.Stop();
+            MarkAllSlotsFree();
+            _cancel.Enabled = false;
+            _openLogs.Enabled = _lastLogDirectory is not null;
+
+            credential?.Dispose();
+            _cancellation?.Dispose();
+            _cancellation = null;
+
+            _main.SetActivity(null);
+        }
+    }
+
+    /// <summary>
+    /// Reports that nothing is in flight any more.
+    /// </summary>
+    /// <remarks>
+    /// The last progress notification a target sends is emitted while it still holds its
+    /// concurrency slot, so the counter never reaches zero on its own and a finished run sat
+    /// there reading "1 slot(s) busy". On a tool whose whole point is that an operator can see
+    /// how many domain controllers it is touching, that is not a cosmetic detail.
+    /// </remarks>
+    private void MarkAllSlotsFree() => _slots.Text = "0 slot(s) busy";
+
+    private void PrepareGrid(DeploymentRequest request) =>
+        PrepareGrid(request.Targets, request.MaxParallel, "complete");
+
+    private void PrepareGrid(IReadOnlyList<DeploymentTarget> targets, int maxParallel, string completionNoun)
     {
         _grid.Rows.Clear();
         _rowByDcId.Clear();
         _startedAt.Clear();
 
-        foreach (var target in request.Targets)
+        foreach (var target in targets)
         {
             var index = _grid.Rows.AddRow(target.Fqdn, "waiting", string.Empty, string.Empty, string.Empty);
             _rowByDcId[target.DcId] = index;
         }
 
-        _overall.Text = $"0 / {request.Targets.Count} complete";
-        _slots.Text = $"0 of {request.MaxParallel} slots busy";
+        _overall.Text = $"0 / {targets.Count} {completionNoun}";
+        _slots.Text = $"0 of {maxParallel} slots busy";
     }
 
     private void OnProgress(DeploymentProgress progress)
@@ -176,6 +289,106 @@ internal sealed class ProgressTab : UserControl
 
         // PRD 8.4: a visible indicator of how many slots are currently occupied.
         _slots.Text = $"{progress.OccupiedSlots} slot(s) busy";
+    }
+
+    private void OnValidationProgress(ValidationProgress progress)
+    {
+        if (!_rowByDcId.TryGetValue(progress.Target.DcId, out var index))
+        {
+            return;
+        }
+
+        var row = _grid.Rows[index];
+
+        row.Cells["stage"].Value = progress.State switch
+        {
+            TargetProgressState.Running => progress.CheckName ?? "checking",
+            TargetProgressState.WaitingForSlot => "waiting for a slot",
+            TargetProgressState.Completed => "done",
+            _ => row.Cells["stage"].Value,
+        };
+
+        if (progress.State == TargetProgressState.Running)
+        {
+            _startedAt.TryAdd(progress.Target.DcId, DateTimeOffset.UtcNow);
+        }
+
+        _overall.Text =
+            $"{progress.CompletedCount} / {progress.TotalCount} checked — " +
+            $"{progress.ReadyCount} ready, {progress.ProblemCount} with problems";
+
+        _slots.Text = $"{progress.OccupiedSlots} slot(s) busy";
+    }
+
+    /// <summary>
+    /// Fills in the grid once validation has finished.
+    /// </summary>
+    /// <remarks>
+    /// A target that is reachable but already carries a newer agent is shown amber, not green.
+    /// Nothing is wrong with the domain controller, but deploying to it would return 1638, and
+    /// a green row invites the operator to press Start and find that out the hard way.
+    /// </remarks>
+    private void RenderValidationOutcomes(ValidationRunSummary summary)
+    {
+        foreach (var outcome in summary.Outcomes)
+        {
+            if (!_rowByDcId.TryGetValue(outcome.Target.DcId, out var index))
+            {
+                continue;
+            }
+
+            var row = _grid.Rows[index];
+            var appearance = OutcomeStyle.ForValidation(outcome);
+
+            row.Cells["stage"].Value = outcome.Passed
+                ? $"{outcome.Checks.Count} checks"
+                : outcome.Failures[0].Name.ToLowerInvariant();
+            row.Cells["elapsed"].Value = outcome.Duration.ToString(@"mm\:ss");
+            row.Cells["outcome"].Value = appearance.Text;
+            row.Cells["detail"].Value = outcome.Summary;
+
+            row.Cells["outcome"].Style.BackColor = appearance.BackColor;
+            row.Cells["outcome"].Style.ForeColor = appearance.ForeColor;
+        }
+    }
+
+    private void ShowValidationMessage(ValidationRunSummary summary)
+    {
+        var lines = new List<string>
+        {
+            $"{summary.ReadyCount} ready, {summary.ProblemCount} with problems.",
+            string.Empty,
+            "Nothing was installed. No deployment history was recorded.",
+        };
+
+        if (summary.WouldBeRefusedCount > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add(
+                $"{summary.WouldBeRefusedCount} domain controller(s) are reachable but already " +
+                "carry a newer agent than this package. msiexec would refuse the install with " +
+                "exit code 1638.");
+        }
+
+        if (summary.WasCancelled)
+        {
+            lines.Add(string.Empty);
+            lines.Add(
+                "The run was cancelled. Targets already in flight finished and their probe " +
+                "files were removed; targets not yet started were not touched.");
+        }
+
+        lines.Add(string.Empty);
+        lines.Add($"Logs: {summary.LogDirectory}");
+
+        MessageBox.Show(
+            this,
+            string.Join(Environment.NewLine, lines),
+            "Validation complete",
+            MessageBoxButtons.OK,
+            summary.ProblemCount > 0 || summary.WouldBeRefusedCount > 0
+                ? MessageBoxIcon.Warning
+                : MessageBoxIcon.Information);
     }
 
     private void UpdateElapsed()
@@ -268,12 +481,17 @@ internal sealed class ProgressTab : UserControl
             return;
         }
 
+        var validating = _main.ActivityInFlight == "validation";
+
         var confirmed = MessageBox.Show(
             this,
             "Stop starting new domain controllers?" + Environment.NewLine + Environment.NewLine +
-            "Targets already in progress will finish or time out, and their staging directories " +
-            "will be cleaned up. Nothing already installed is undone.",
-            "Cancel deployment",
+            (validating
+                ? "Targets already in progress will finish or time out, and their probe files " +
+                  "will be removed. Nothing was installed on any of them."
+                : "Targets already in progress will finish or time out, and their staging " +
+                  "directories will be cleaned up. Nothing already installed is undone."),
+            validating ? "Cancel validation" : "Cancel deployment",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question) == DialogResult.Yes;
 

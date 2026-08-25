@@ -37,7 +37,7 @@ HybridAgentDeploy.slnx
 │   │   ├── Deployment/                  # Orchestrator, transports, safety limits
 │   │   ├── Discovery/                   # AD enumeration, text-file import
 │   │   ├── Inventory/                   # SQLite schema, migrations, repositories
-│   │   ├── Logging/                     # File sink, per-run run.log writer
+│   │   ├── Logging/                     # File sink, per-run run.log and validation.log
 │   │   ├── Models/
 │   │   └── Msi/                         # MSI property extraction
 │   ├── HybridAgentDeploy.Cli/           # Console. Thin — presentation only.
@@ -118,6 +118,48 @@ dc01.corp.local
 dc02.corp.local
 DC07              # NetBIOS names work too
 ```
+
+## Validating before you deploy
+
+The Deploy tab has a **Validate targets** button beside Start. It runs the whole per-target
+sequence a deployment runs — pre-flight, stage, execute, clean up — minus the one step that
+changes the machine, and reports the result on the Progress tab exactly as a deployment
+does. On each selected domain controller it:
+
+- confirms DNS, SMB, and WinRM answer;
+- writes a 4 KB file of random bytes to `C:\Windows\Temp\HybridAgentDeploy\validate-{guid}`
+  and verifies its SHA-256 on the way back;
+- opens a remoting session and runs `cmd /c exit 0`;
+- reads which Change Auditor agent is installed, from both registry views;
+- deletes the file.
+
+Nothing is installed, the package is never copied to a target, and msiexec is never run.
+`ValidationRunner` contains no code path able to execute an installer, which is deliberate:
+a flag on the deployment orchestrator would have put "do not install" one boolean away from
+"install" on a Tier 0 host.
+
+**Why an active probe rather than a port check.** Reaching TCP 445 proves a port is open,
+not that the account may open a session; a readable `C$` proves nothing about writing to it.
+Both pass happily on a domain controller that then fails at the staging step — after a 67 MB
+installer has already been sent to it.
+
+**It predicts what a deployment would do.** Comparing the installed agent's version against
+the selected package yields a fresh install, an upgrade, a reinstall of the same build, or a
+downgrade the installer will refuse with 1638. The last of those shows amber rather than
+green: nothing is wrong with the host, but it is not a target for this package.
+
+**Pacing is identical to a deployment's** — the ceiling of five (R7.1) and the site guard
+(R7.2), which the Progress tab now states in words, because a run deliberately held at two
+at a time otherwise looks like a hung one. The circuit breaker is deliberately *not*
+applied: it exists to stop a bad deployment part-way through a forest, and an operator
+validating sixty controllers wants all of the broken ones, not the first three.
+
+An Org ID is not required — no installer runs, so there is nothing for one to configure.
+
+**No deployment history is recorded.** A validation writes `validation.log` and
+`results.csv` into its own timestamped folder suffixed `-validate`, and leaves
+`deployment_run` untouched. Nothing was deployed; a history that said otherwise would
+misreport what ran against the customer's domain controllers.
 
 ## Test fixtures
 

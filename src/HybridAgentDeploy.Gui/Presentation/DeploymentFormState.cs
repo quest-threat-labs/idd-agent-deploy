@@ -29,8 +29,11 @@ public sealed record DeploymentFormState
 
     public int SelectedTargetCount { get; init; }
 
-    /// <summary>True while a deployment is running. Blocks starting another.</summary>
-    public bool IsDeploying { get; init; }
+    /// <summary>
+    /// What is already running against domain controllers — "deployment" or "validation" — or
+    /// null when nothing is. Blocks starting anything else.
+    /// </summary>
+    public string? ActivityInFlight { get; init; }
 
     /// <summary>Set when an alternate account is chosen but no password has been entered.</summary>
     public bool AlternateCredentialIncomplete { get; init; }
@@ -51,9 +54,9 @@ public sealed record DeploymentFormState
     {
         get
         {
-            if (IsDeploying)
+            if (SharedBlockingReason is { } shared)
             {
-                return "A deployment is already running. Wait for it to finish before starting another.";
+                return shared;
             }
 
             if (Msi is null)
@@ -83,6 +86,64 @@ public sealed record DeploymentFormState
             return null;
         }
     }
+
+    public bool CanValidate => ValidationBlockingReason is null;
+
+    /// <summary>
+    /// Why the Validate button is disabled, or null when it is enabled.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a shorter list than <see cref="BlockingReason"/>: validation does not
+    /// require an Org ID, because no installer runs and there is nothing for an Org ID to
+    /// configure. Requiring one would make an operator invent a value to find out whether
+    /// their domain controllers are reachable — and an invented value is exactly what you do
+    /// not want sitting in the box when they later press Start.
+    /// </remarks>
+    public string? ValidationBlockingReason
+    {
+        get
+        {
+            if (SharedBlockingReason is { } shared)
+            {
+                return shared;
+            }
+
+            if (Msi is null)
+            {
+                // Required because validation reports what deploying this package would do to
+                // each target. Without one there is nothing to compare the installed agent
+                // against, and the most useful half of the answer disappears.
+                return "Select an installer package. Validation compares its version against " +
+                       "the agent already installed on each domain controller.";
+            }
+
+            if (SelectedTargetCount == 0)
+            {
+                return "Select at least one domain controller on the Inventory tab.";
+            }
+
+            if (AlternateCredentialIncomplete)
+            {
+                return "Enter the password for the alternate account, or switch back to the " +
+                       "current Windows identity.";
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The reasons that stop both buttons.
+    /// </summary>
+    /// <remarks>
+    /// Only one run of either kind at a time. Two orchestrators would each permit five
+    /// concurrent targets, so validating while deploying would silently turn the R7.1 ceiling
+    /// of five into ten against domain controllers.
+    /// </remarks>
+    private string? SharedBlockingReason =>
+        ActivityInFlight is { } activity
+            ? $"A {activity} is already running. Wait for it to finish before starting another."
+            : null;
 
     /// <summary>
     /// The confirmation text shown before a run starts (PRD 8.3).
@@ -117,6 +178,51 @@ public sealed record DeploymentFormState
             lines.Add(string.Empty);
             lines.Add(
                 $"{hiddenSelectedCount} of these are hidden by the current filter.");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>
+    /// The confirmation text shown before a validation run.
+    /// </summary>
+    /// <remarks>
+    /// Validation installs nothing, so this is not the safety gate the deployment prompt is.
+    /// It is here because the operator is about to have a tool open sessions to Tier 0 hosts
+    /// and write files to them, and they are entitled to read what that involves in one screen
+    /// before it happens rather than reconstruct it from a log afterwards.
+    /// </remarks>
+    public string ValidationPrompt(IReadOnlyList<string> targetFqdns, int hiddenSelectedCount)
+    {
+        var lines = new List<string>
+        {
+            $"Check {SelectedTargetCount} domain controller" +
+            $"{(SelectedTargetCount == 1 ? string.Empty : "s")} against " +
+            $"{Msi?.ProductName ?? "this package"} {Msi?.ProductVersion}?",
+            string.Empty,
+            "On each one this will:",
+            "  - confirm DNS, SMB, and WinRM answer",
+            "  - write a small test file to C:\\Windows\\Temp and read it back",
+            "  - open a remoting session and run a command that does nothing",
+            "  - read which Change Auditor agent is installed",
+            "  - delete the test file",
+            string.Empty,
+            "Nothing is installed, changed, or restarted. The package is not copied to any " +
+            "domain controller and msiexec is not run.",
+            string.Empty,
+        };
+
+        lines.AddRange(targetFqdns.Take(12).Select(f => $"  {f}"));
+
+        if (targetFqdns.Count > 12)
+        {
+            lines.Add($"  ... and {targetFqdns.Count - 12} more");
+        }
+
+        if (hiddenSelectedCount > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add($"{hiddenSelectedCount} of these are hidden by the current filter.");
         }
 
         return string.Join(Environment.NewLine, lines);

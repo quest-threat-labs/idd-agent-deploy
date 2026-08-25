@@ -79,6 +79,45 @@ public sealed class SiteConcurrencyGuard
     public bool IsSerialised(string? siteName) => LimitFor(siteName) == 1;
 
     /// <summary>
+    /// One line describing how a set of targets will actually be paced.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The site guard is invisible in the UI but decides how long a run takes. A selection
+    /// concentrated in one two-DC site runs one at a time however the max-parallel setting is
+    /// set, and an operator who cannot see why concludes the tool has hung.
+    /// </para>
+    /// <para>
+    /// Only limits below the global ceiling are named. Repeating "at most 5" for every site in
+    /// a large forest would bury the one site that is actually the bottleneck.
+    /// </para>
+    /// </remarks>
+    public string DescribePacing(IEnumerable<DeploymentTarget> targets, int maxParallel)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+
+        var binding = targets
+            .Select(t => string.IsNullOrWhiteSpace(t.SiteName) ? UnknownSiteKey : t.SiteName!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(site => (Site: site, Limit: LimitFor(site)))
+            .Where(x => x.Limit < maxParallel)
+            .OrderBy(x => x.Limit)
+            .ThenBy(x => x.Site, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var text = $"At most {maxParallel} at a time";
+
+        if (binding.Count == 0)
+        {
+            return text + ".";
+        }
+
+        return text + ", and within " +
+            string.Join(", ", binding.Select(x => $"{x.Site} at most {x.Limit}")) +
+            " (PRD R7.2 never occupies more than half a site's domain controllers).";
+    }
+
+    /// <summary>
     /// Waits for a slot in the target's site and returns a handle that releases it on
     /// dispose.
     /// </summary>

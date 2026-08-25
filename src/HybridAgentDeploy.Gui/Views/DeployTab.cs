@@ -176,8 +176,7 @@ internal sealed class DeployTab : UserControl
             Ui.Label("Per-target timeout (minutes):"), _timeout));
 
         layout.Controls.Add(Ui.Heading("Run as"));
-        layout.Controls.Add(Ui.Row(_currentIdentity));
-        layout.Controls.Add(Ui.Row(_alternateIdentity, _userName, Ui.Label("Password:"), _password));
+        layout.Controls.Add(RunAsPanel(_currentIdentity, _alternateIdentity, _userName, _password));
 
         layout.Controls.Add(Ui.Heading("Targets"));
         layout.Controls.Add(_targetSummary);
@@ -209,6 +208,60 @@ internal sealed class DeployTab : UserControl
         host.Controls.Add(actions);
 
         return host;
+    }
+
+    /// <summary>
+    /// The "Run as" choice: both options and the alternate account's fields.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both radio buttons must be direct children of <em>one</em> container. WinForms scopes
+    /// mutual exclusion to the immediate parent, so putting each in its own row panel — as this
+    /// screen originally did — made them two groups of one. Selecting "Alternate account" left
+    /// "Current Windows identity" selected as well.
+    /// </para>
+    /// <para>
+    /// That was not merely untidy. Whether alternate credentials are used is decided by
+    /// <c>_alternateIdentity.Checked</c>, so an operator who filled in an alternate account and
+    /// then clicked back to their current identity would have deployed under the alternate
+    /// account anyway, while the screen showed otherwise. Running against a domain controller
+    /// as an account other than the one the operator believes they chose is exactly the kind of
+    /// surprise this tool exists to avoid.
+    /// </para>
+    /// </remarks>
+    internal static Control RunAsPanel(
+        RadioButton currentIdentity,
+        RadioButton alternateIdentity,
+        Control userName,
+        Control password)
+    {
+        var panel = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 4,
+            RowCount = 2,
+            Margin = new Padding(0),
+        };
+
+        for (var column = 0; column < 4; column++)
+        {
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        }
+
+        panel.Controls.Add(currentIdentity, 0, 0);
+        panel.SetColumnSpan(currentIdentity, 4);
+
+        panel.Controls.Add(alternateIdentity, 0, 1);
+        panel.Controls.Add(userName, 1, 1);
+        panel.Controls.Add(Ui.Label("Password:"), 2, 1);
+        panel.Controls.Add(password, 3, 1);
+
+        // Vertically centre the fields against the radio button on the same row.
+        userName.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        password.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+
+        return panel;
     }
 
     /// <summary>

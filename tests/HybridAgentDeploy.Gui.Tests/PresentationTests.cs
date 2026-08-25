@@ -1,3 +1,4 @@
+using HybridAgentDeploy.Gui.Views;
 using HybridAgentDeploy.Core.Models;
 using HybridAgentDeploy.Gui.Presentation;
 
@@ -547,4 +548,119 @@ public sealed class TagListTests
     }
 
     private static TagRecord Tag(string name) => new() { Name = name };
+}
+
+/// <summary>
+/// The "Run as" choice on the deployment screen (SEC2).
+/// </summary>
+/// <remarks>
+/// Regression cover for a reported bug: selecting "Alternate account" did not deselect
+/// "Current Windows identity". WinForms scopes radio-button exclusion to the immediate parent,
+/// and each option had been placed in its own row panel — two groups of one.
+///
+/// This was not only cosmetic. Whether alternate credentials are used is decided by the
+/// alternate button's checked state, so an operator who filled in an alternate account and then
+/// clicked back to their current identity would have deployed under the alternate account while
+/// the screen showed otherwise — running against a domain controller as an account other than
+/// the one they believed they had chosen.
+/// </remarks>
+public sealed class RunAsPanelTests
+{
+    [Fact]
+    public void Both_options_share_one_parent_so_windows_treats_them_as_one_group()
+    {
+        using var fixture = new RunAsFixture();
+
+        Assert.NotNull(fixture.Current.Parent);
+        Assert.Same(fixture.Current.Parent, fixture.Alternate.Parent);
+    }
+
+    /// <summary>The behaviour that was reported broken, asserted directly.</summary>
+    [Fact]
+    public void Selecting_the_alternate_account_deselects_the_current_identity()
+    {
+        using var fixture = new RunAsFixture();
+        fixture.Current.Checked = true;
+
+        fixture.Alternate.Checked = true;
+
+        Assert.True(fixture.Alternate.Checked);
+        Assert.False(fixture.Current.Checked);
+    }
+
+    [Fact]
+    public void Selecting_the_current_identity_deselects_the_alternate_account()
+    {
+        using var fixture = new RunAsFixture();
+        fixture.Alternate.Checked = true;
+
+        fixture.Current.Checked = true;
+
+        Assert.True(fixture.Current.Checked);
+        Assert.False(fixture.Alternate.Checked);
+    }
+
+    /// <summary>
+    /// The two can never both be selected, which is what decides whether a run uses the
+    /// operator's own identity or an alternate account.
+    /// </summary>
+    [Fact]
+    public void The_two_options_are_never_selected_at_once()
+    {
+        using var fixture = new RunAsFixture();
+
+        foreach (var select in new[] { true, false, true, true, false })
+        {
+            if (select)
+            {
+                fixture.Alternate.Checked = true;
+            }
+            else
+            {
+                fixture.Current.Checked = true;
+            }
+
+            Assert.False(fixture.Current.Checked && fixture.Alternate.Checked);
+        }
+    }
+
+    [Fact]
+    public void The_alternate_account_fields_are_present_in_the_panel()
+    {
+        using var fixture = new RunAsFixture();
+
+        Assert.Same(fixture.Panel, fixture.UserName.Parent);
+        Assert.Same(fixture.Panel, fixture.Password.Parent);
+    }
+
+    private sealed class RunAsFixture : IDisposable
+    {
+        public RunAsFixture()
+        {
+            Current = new RadioButton { Text = "Current Windows identity", Checked = true };
+            Alternate = new RadioButton { Text = "Alternate account:" };
+            UserName = new TextBox();
+            Password = new TextBox();
+
+            Panel = DeployTab.RunAsPanel(Current, Alternate, UserName, Password);
+
+            // A parent form so the controls behave as they do in the running application.
+            Host = new Form();
+            Host.Controls.Add(Panel);
+        }
+
+        public RadioButton Current { get; }
+
+        public RadioButton Alternate { get; }
+
+        public TextBox UserName { get; }
+
+        public TextBox Password { get; }
+
+        public Control Panel { get; }
+
+        private Form Host { get; }
+
+        public void Dispose() => Host.Dispose();
+    }
 }

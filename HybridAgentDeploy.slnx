@@ -4,6 +4,9 @@
       <Platform Project="x64" />
     </Project>
     <Project Path="src/HybridAgentDeploy.Core/HybridAgentDeploy.Core.csproj" />
+    <Project Path="src/HybridAgentDeploy.Gui/HybridAgentDeploy.Gui.csproj">
+      <Platform Project="x64" />
+    </Project>
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/HybridAgentDeploy.Cli.Tests/HybridAgentDeploy.Cli.Tests.csproj">
@@ -12,5 +15,8 @@
     <Project Path="tests/HybridAgentDeploy.Core.IntegrationTests/HybridAgentDeploy.Core.IntegrationTests.csproj" />
     <Project Path="tests/HybridAgentDeploy.Core.Testing/HybridAgentDeploy.Core.Testing.csproj" />
     <Project Path="tests/HybridAgentDeploy.Core.Tests/HybridAgentDeploy.Core.Tests.csproj" />
+    <Project Path="tests/HybridAgentDeploy.Gui.Tests/HybridAgentDeploy.Gui.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
   </Folder>
 </Solution>

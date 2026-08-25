@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Presentation only. All orchestration, validation, and state transitions live in Core
+    (CLAUDE.md, PRD 5.2). If a code path can only be exercised through a window, it is in the
+    wrong project.
+
+    Layout is defined in code rather than in generated .Designer.cs files, so diffs stay
+    reviewable and there is no designer round-trip to corrupt. The Visual Studio designer will
+    not render these forms; edit the C#.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>HybridAgentDeploy</AssemblyName>
+    <RootNamespace>HybridAgentDeploy.Gui</RootNamespace>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HybridAgentDeploy.Core\HybridAgentDeploy.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="HybridAgentDeploy.Gui.Tests" />
+  </ItemGroup>
+
+</Project>

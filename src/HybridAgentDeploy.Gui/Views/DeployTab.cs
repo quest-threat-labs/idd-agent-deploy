@@ -63,7 +63,7 @@ internal sealed class DeployTab : UserControl
         Height = 70,
         ScrollBars = ScrollBars.Vertical,
         BackColor = SystemColors.Control,
-        Font = new Font(FontFamily.GenericMonospace, 8.5f),
+        Font = Ui.Monospace(9.5f),
     };
 
     private readonly Label _targetSummary = new() { AutoSize = true, MaximumSize = new Size(900, 0) };

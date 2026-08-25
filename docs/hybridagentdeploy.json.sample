@@ -1,0 +1,15 @@
+// Rename this file to hybridagentdeploy.json to make the installation portable.
+//
+// Relative paths are resolved against the folder holding this file, so the tool, its
+// database, and its logs travel together on a share or a USB stick. Absolute paths work
+// too, as do environment variables such as %LOCALAPPDATA%.
+//
+// Delete the file to fall back to the default location under
+// %LOCALAPPDATA%\Quest\HybridAgentDeploy.
+{
+  // The inventory, tags, and deployment history.
+  "databasePath": "data/inventory.db",
+
+  // One folder is created under here per deployment and per validation.
+  "logRootPath": "data/logs"
+}

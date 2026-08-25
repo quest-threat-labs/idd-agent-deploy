@@ -247,6 +247,55 @@ public sealed class AppConfigurationTests
         }
     }
 
+    /// <summary>
+    /// The sample config shipped in the bundle must actually load.
+    /// </summary>
+    /// <remarks>
+    /// It is documentation that becomes executable the moment an operator renames it, and a
+    /// malformed config file is deliberately fatal — so a broken sample would not produce a
+    /// warning, it would stop the tool starting. The first draft of this file had duplicate
+    /// keys and an invalid <c>\Q</c> escape in a Windows path, which is exactly that bug.
+    /// </remarks>
+    [Fact]
+    public void The_shipped_sample_config_parses_and_yields_portable_paths()
+    {
+        var sample = Path.Combine(RepositoryRoot(), "docs", "hybridagentdeploy.json.sample");
+        Assert.True(File.Exists(sample), $"sample config not found at {sample}");
+
+        var directory = CreateTempDirectory();
+        try
+        {
+            File.Copy(sample, Path.Combine(directory, AppConfigurationLoader.ConfigFileName));
+
+            var config = AppConfigurationLoader.Load(directory);
+
+            Assert.True(config.IsPortable);
+
+            // Relative paths anchored to the config's own folder is the whole point: it is
+            // what lets the tool, its database, and its logs travel together.
+            Assert.StartsWith(directory, config.DatabasePath, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith(directory, config.LogRootPath, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>Walks up from the test binary to the repository root.</summary>
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Directory.Build.props")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory!.FullName;
+    }
+
     /// <summary>PRD 12.1: one directory per run, named for its start time and run GUID.</summary>
     [Fact]
     public void A_run_log_directory_is_named_for_its_timestamp_and_run_guid()

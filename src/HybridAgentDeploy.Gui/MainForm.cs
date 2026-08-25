@@ -56,6 +56,7 @@ internal sealed class MainForm : Form
 
         Text = "Hybrid Audit Agent Deployment Utility";
         StartPosition = FormStartPosition.CenterScreen;
+        Icon = LoadApplicationIcon();
 
         _inventoryTab = new InventoryTab(this);
         _tagsTab = new TagsTab(this);
@@ -211,6 +212,38 @@ internal sealed class MainForm : Form
         Location = new Point(
             work.Left + ((work.Width - Size.Width) / 2),
             work.Top + ((work.Height - Size.Height) / 2));
+    }
+
+    /// <summary>
+    /// The window icon, read from the embedded copy.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <c>ApplicationIcon</c> in the project file: that stamps the executable,
+    /// which is what Explorer shows, while this is what the title bar, the taskbar button, and
+    /// the Alt-Tab switcher show. Setting only the first leaves an operator looking at the
+    /// default WinForms icon in the one place they need to find this window among a dozen
+    /// others.
+    /// </para>
+    /// <para>
+    /// Falls back to no icon rather than throwing. A missing resource is a packaging defect
+    /// worth fixing, but it is not a reason to stop an operator deploying to a domain
+    /// controller.
+    /// </para>
+    /// </remarks>
+    private static Icon? LoadApplicationIcon()
+    {
+        try
+        {
+            using var stream = typeof(MainForm).Assembly
+                .GetManifestResourceStream("HybridAgentDeploy.appicon.ico");
+
+            return stream is null ? null : new Icon(stream);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static TabPage NewPage(string title, Control content)

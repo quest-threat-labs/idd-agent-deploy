@@ -7,7 +7,18 @@
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <AssemblyName>hybridagentdeploy</AssemblyName>
+
+    <!--
+      NOT "hybridagentdeploy". The GUI publishes as HybridAgentDeploy.exe, and Windows
+      filenames are case-insensitive, so the two would be the same file. Publishing both into
+      one folder does not warn about this: the second publish silently overwrites the first,
+      and the bundle ships with only one of the two programs in it. Found by publishing both
+      and counting the executables.
+
+      The GUI keeps the descriptive name because it is double-clicked; the CLI takes the short
+      one because it is typed.
+    -->
+    <AssemblyName>hadeploy</AssemblyName>
     <RootNamespace>HybridAgentDeploy.Cli</RootNamespace>
 
     <!-- The CLI is the escape hatch for hosts with no desktop, including Server Core

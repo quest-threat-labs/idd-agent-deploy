@@ -64,19 +64,24 @@ The manual test matrix that forms the Phase 5 acceptance criterion is in
 ## CLI
 
 ```
-hybridagentdeploy enumerate         [--domain <fqdn>] [--tag <name>]... [--user <account>]
-hybridagentdeploy import            --file <path> [--tag <name>]... [--dry-run]
-hybridagentdeploy list              [--tag <name>] [--site <name>] [--format table|csv|json]
-hybridagentdeploy inspect-msi       --msi <path> [--format table|json]
-hybridagentdeploy test-connectivity [--tag <name>]... [--host <fqdn>]... [--all]
-hybridagentdeploy deploy            --msi <path> --org-id <id>
-                                    [--tag <name>]... [--host <fqdn>]... [--all]
-                                    [--no-cloud-mode] [--max-parallel 1-5]
-                                    [--timeout-minutes 5-60] [--log-dir <path>]
-                                    [--confirm] [--user <account>] [--use-https]
-                                    [--format table|csv|json]
-hybridagentdeploy history           [--run <guid>] [--host <fqdn>] [--format table|csv|json]
+hadeploy enumerate         [--domain <fqdn>] [--tag <name>]... [--user <account>]
+hadeploy import            --file <path> [--tag <name>]... [--dry-run]
+hadeploy list              [--tag <name>] [--site <name>] [--format table|csv|json]
+hadeploy inspect-msi       --msi <path> [--format table|json]
+hadeploy test-connectivity [--tag <name>]... [--host <fqdn>]... [--all]
+hadeploy deploy            --msi <path> --org-id <id>
+                           [--tag <name>]... [--host <fqdn>]... [--all]
+                           [--no-cloud-mode] [--max-parallel 1-5]
+                           [--timeout-minutes 5-60] [--log-dir <path>]
+                           [--confirm] [--user <account>] [--use-https]
+                           [--format table|csv|json]
+hadeploy history           [--run <guid>] [--host <fqdn>] [--format table|csv|json]
 ```
+
+The CLI is `hadeploy.exe`, not `hybridagentdeploy.exe`. Both programs ship in one folder, and
+`hybridagentdeploy.exe` and the GUI's `HybridAgentDeploy.exe` are the same filename on
+Windows — publishing both silently leaves only one of them. The GUI keeps the descriptive
+name because it is double-clicked; the CLI takes the short one because it is typed.
 
 `deploy` refuses to run without `--confirm` when more than one DC is selected, which is what
 stops a mistyped script pushing to an entire forest.
@@ -263,6 +268,107 @@ executable:
 Relative paths are anchored to the directory holding the config file, so the whole layout
 travels together.
 
+## Packaging
+
+```powershell
+.\tools\publish.ps1                      # unsigned, for lab use
+.\tools\publish.ps1 -SignToolPath <path> -CertificateThumbprint <sha1>
+```
+
+Produces `artifacts\HybridAgentDeploy\` — **one folder, both programs, 143 MB, 314 files**,
+self-contained on `win-x64`. Copy the folder; run `HybridAgentDeploy.exe` or `hadeploy.exe`.
+Nothing needs installing on the machine it runs from.
+
+**The whole folder is the deliverable.** It is copied as a unit — the `.exe` files are
+apphosts, the code and the .NET runtime sit beside them. The only genuinely optional files
+are the three `.pdb`s (152 KB), and they are what turn a stack trace in a log into something
+readable, so they stay.
+
+### Two things trimmed out of it
+
+`Microsoft.PowerShell.SDK` contributes 27 MB the tool never touches. Removed, because NFR4
+expects the bundle to live on a share where every megabyte is paid on each launch:
+
+| Removed | Size | Why it is safe |
+|---|---|---|
+| 13 satellite locale folders | 20 MB | PowerShell's localised messages. This tool's interface and error text are English regardless, so a non-English host would otherwise get an English window containing one translated exception. `SatelliteResourceLanguages` in `Directory.Build.props`. |
+| `ref\` — 167 reference assemblies | 7 MB | They exist so PowerShell's `Add-Type` can compile C# at runtime. This tool never calls it, and the SDK here is only the WinRM **client** — every remote script executes in the target controller's own Windows PowerShell. `Directory.Build.targets`. |
+
+Verified rather than reasoned: a bundle with both removed ran a full validation against five
+lab domain controllers — SMB staging, WinRM session, remote script execution, output parsing,
+cleanup — with results identical to the untrimmed bundle.
+
+`publish.ps1` asserts both trims still happened. Each is silent when it stops working: a
+NuGet update that moves the contentFiles, or a project overriding
+`SatelliteResourceLanguages`, would quietly put 27 MB back. Both assertions were checked by
+breaking the thing they guard.
+
+**One bundle, not two.** The GUI and CLI share one copy of the .NET runtime. Publishing them
+separately would double the payload for no benefit, and NFR4 expects this to live on a share
+where the size is paid on every launch.
+
+**Not trimmed, not NativeAOT, not ReadyToRun.** PRD §5.1: `Microsoft.PowerShell.SDK` tolerates
+none of it and resolves modules from disk.
+
+**Not single-file — Q4 answered by measurement.** Both were published and compared:
+
+| | Size | Top-level entries |
+|---|---|---|
+| folder | 168 MB untrimmed, 143 MB as shipped | many |
+| single-file | 162 MB | 12 — a 166 MB exe *plus* eight native libraries and a `runtimes\` directory |
+
+`PublishSingleFile` does not produce a single file here: `e_sqlite3.dll`, `pwrshplugin.dll`,
+`sni.dll` and friends cannot be embedded. The operator copies a folder either way, so the
+single-file build buys nothing and adds a first-launch extraction step. PRD §5.1 predicted
+exactly this.
+
+### Signing
+
+PRD Q3 — whether Quest will sign a tool carrying unsupported status — is deferred, so the
+pipeline is wired up and waiting for a certificate. SEC9 requires a signature before
+distribution: an unsigned bundle is fine for a lab and is not releasable.
+
+```powershell
+.\tools\publish.ps1 `
+    -SignToolPath 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe' `
+    -CertificateThumbprint <sha1> `
+    -TimestampUrl http://timestamp.digicert.com     # default
+```
+
+**Only 13 of the 285 binaries get signed, and that is deliberate.** 272 of them already carry
+valid Microsoft or .NET Foundation signatures, and `signtool` *replaces* an existing signature
+rather than adding to it — so signing everything would strip Microsoft's attestation off 234
+.NET runtime files and substitute ours, claiming authorship of code we did not write and
+discarding the stronger signature to do it. The script signs what is unsigned: our five
+outputs, plus eight third-party libraries that ship unsigned from NuGet (`SQLitePCLRaw`,
+`e_sqlite3`, the `JsonSchema.Net` family, `Markdig`). Those do need covering, because
+AppLocker publisher rules and some EDR products evaluate what gets *loaded*, not only what
+gets launched.
+
+**Timestamping is not optional in practice.** Without `/tr`, the signature stops validating
+the day the certificate expires — on every copy already sitting on a customer's share. The
+script warns loudly if you pass an empty `-TimestampUrl`.
+
+**It verifies rather than trusting the exit code**: `signtool verify /pa` plus a census
+confirming every binary ends up `Valid`. Checked by signing with a self-signed certificate,
+which is well-formed but chains to nothing — the guard caught it.
+
+**What a certificate would have to be.** Since 2023 the CA/Browser Forum requires
+publicly-trusted code-signing keys to live on FIPS 140-2 Level 2 hardware, so no one will
+hand over a `.pfx`. In practice that means one of: Quest's own signing service or signing
+machine; a cloud signing service such as Azure Trusted Signing or DigiCert KeyLocker, which
+`signtool` drives through a `/dlib` provider instead of `/sha1`; or — worth considering for a
+field utility aimed at AD shops — **the customer's own internal CA**, whose certificate their
+own AppLocker and WDAC policies already trust.
+
+**The icon** is generated by `tools/make-icon.ps1` and committed as
+`src/HybridAgentDeploy.Gui/appicon.ico` — the build does not depend on the script having run.
+Seven frames from 16 to 256 pixels; the mark is a plain arrow-into-bar because nothing with
+interior detail survives 16 pixels, which is the size that matters for picking the window out
+of a taskbar.
+
+The Phase 6 acceptance checklist is [`docs/phase-6-acceptance.md`](docs/phase-6-acceptance.md).
+
 ## Phase status
 
 | Phase | Scope | State |
@@ -272,4 +378,4 @@ travels together.
 | 3 | `WinRmSmbTransport` | Complete |
 | 4 | CLI | Complete (live deploy acceptance run deferred) |
 | 5 | WinForms GUI | Complete (manual test matrix outstanding) |
-| 6 | Packaging and signing | Not started |
+| 6 | Packaging and signing | Built; acceptance run on TitancorpNPV02 outstanding, signing deferred (Q3) |

@@ -1,0 +1,38 @@
+<Project>
+
+  <!--
+    Drops the reference assemblies Microsoft.PowerShell.SDK contributes to the publish output.
+
+    The package ships 167 of them under ref/ as NuGet contentFiles marked copyToOutput, worth
+    7 MB of the bundle. They exist so that PowerShell's Add-Type cmdlet can compile C# at
+    runtime: Roslyn needs something to compile against.
+
+    This tool never calls Add-Type. More to the point, the PowerShell SDK here is only the
+    WinRM *client* — every script this tool runs executes in the target domain controller's
+    own Windows PowerShell, using that machine's assemblies, not ours. There is no code path
+    on the client that compiles anything.
+
+    Verified rather than assumed: a bundle with ref/ deleted ran a full validation against
+    five lab domain controllers — SMB staging, WinRM session, remote script execution, output
+    parsing, cleanup — with results identical to the untrimmed bundle.
+
+    Publish only, deliberately. The build output keeps them, so anything in the repository
+    that did start needing Add-Type would fail in a test rather than in a customer
+    environment.
+  -->
+  <Target Name="RemovePowerShellReferenceAssembliesFromPublish"
+          AfterTargets="ComputeResolvedFilesToPublishList">
+
+    <ItemGroup>
+      <_PowerShellRefAssembly
+        Include="@(ResolvedFileToPublish)"
+        Condition="$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').StartsWith('ref\'))" />
+
+      <ResolvedFileToPublish Remove="@(_PowerShellRefAssembly)" />
+    </ItemGroup>
+
+    <Message Importance="normal"
+             Text="Excluded @(_PowerShellRefAssembly->Count()) PowerShell reference assemblies from the publish output." />
+  </Target>
+
+</Project>

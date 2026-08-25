@@ -161,7 +161,7 @@ messages, and arranging a failure is what the lab is for.
 
 ## What automated tests already cover
 
-Do not spend manual time re-checking these — 476 automated tests cover them, and the lab
+Do not spend manual time re-checking these — 477 automated tests cover them, and the lab
 tests run against real domain controllers:
 
 - Exit-code mapping for every row of §10.1, including 1618 retry and the 3010/1641 successes.

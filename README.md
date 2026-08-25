@@ -32,21 +32,54 @@ Targets `net10.0-windows`, x64. Verify with `dotnet --list-sdks`.
 ```
 HybridAgentDeploy.slnx
 ├── src/
-│   └── HybridAgentDeploy.Core/          # All logic. No UI references.
-│       ├── Configuration/               # Path resolution, portable mode
-│       ├── Deployment/                  # ITargetTransport, safety limits
-│       ├── Discovery/                   # AD enumeration, text-file import
-│       ├── Inventory/                   # SQLite schema, migrations, repositories
-│       ├── Logging/                     # File sink for Microsoft.Extensions.Logging
-│       ├── Models/
-│       └── Msi/                         # MSI property extraction
+│   ├── HybridAgentDeploy.Core/          # All logic. No UI references.
+│   │   ├── Configuration/               # Path resolution, portable mode
+│   │   ├── Deployment/                  # Orchestrator, transports, safety limits
+│   │   ├── Discovery/                   # AD enumeration, text-file import
+│   │   ├── Inventory/                   # SQLite schema, migrations, repositories
+│   │   ├── Logging/                     # File sink, per-run run.log writer
+│   │   ├── Models/
+│   │   └── Msi/                         # MSI property extraction
+│   └── HybridAgentDeploy.Cli/           # Console. Thin — presentation only.
 └── tests/
     ├── HybridAgentDeploy.Core.Testing/  # SimulatedTransport, stub resolver
     ├── HybridAgentDeploy.Core.Tests/
+    ├── HybridAgentDeploy.Cli.Tests/
     └── HybridAgentDeploy.Core.IntegrationTests/
 ```
 
-`HybridAgentDeploy.Gui` (WinForms) and `HybridAgentDeploy.Cli` arrive in Phases 5 and 4.
+`HybridAgentDeploy.Gui` (WinForms) arrives in Phase 5.
+
+## CLI
+
+```
+hybridagentdeploy enumerate         [--domain <fqdn>] [--tag <name>]... [--user <account>]
+hybridagentdeploy import            --file <path> [--tag <name>]... [--dry-run]
+hybridagentdeploy list              [--tag <name>] [--site <name>] [--format table|csv|json]
+hybridagentdeploy inspect-msi       --msi <path> [--format table|json]
+hybridagentdeploy test-connectivity [--tag <name>]... [--host <fqdn>]... [--all]
+hybridagentdeploy deploy            --msi <path> --org-id <id>
+                                    [--tag <name>]... [--host <fqdn>]... [--all]
+                                    [--no-cloud-mode] [--max-parallel 1-5]
+                                    [--timeout-minutes 5-60] [--log-dir <path>]
+                                    [--confirm] [--user <account>] [--use-https]
+                                    [--format table|csv|json]
+hybridagentdeploy history           [--run <guid>] [--host <fqdn>] [--format table|csv|json]
+```
+
+`deploy` refuses to run without `--confirm` when more than one DC is selected, which is what
+stops a mistyped script pushing to an entire forest.
+
+**Exit codes:** `0` all succeeded · `1` completed with failures · `2` halted by the circuit
+breaker · `3` invalid arguments or pre-flight failure · `4` cancelled.
+
+**Streams:** command output goes to stdout; progress, warnings, and errors go to stderr —
+always, in every format. `--format json` on stdout is therefore parseable even while the
+command is reporting progress.
+
+**Credentials:** `--user DOMAIN\user` prompts for the password, or reads it from stdin when
+redirected. There is deliberately no `--password` option: an argument is visible in process
+listings, shell history, and script transcripts. Omitting `--user` uses the current identity.
 
 ## How the inventory works
 
@@ -131,6 +164,6 @@ travels together.
 | 1 | Core foundation | Complete |
 | 2 | Deployment orchestrator | Complete |
 | 3 | `WinRmSmbTransport` | Complete |
-| 4 | CLI | Not started |
+| 4 | CLI | Complete (live deploy acceptance run deferred) |
 | 5 | WinForms GUI | Not started |
 | 6 | Packaging and signing | Not started |

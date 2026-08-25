@@ -1,8 +1,14 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/HybridAgentDeploy.Cli/HybridAgentDeploy.Cli.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="src/HybridAgentDeploy.Core/HybridAgentDeploy.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/HybridAgentDeploy.Cli.Tests/HybridAgentDeploy.Cli.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="tests/HybridAgentDeploy.Core.IntegrationTests/HybridAgentDeploy.Core.IntegrationTests.csproj" />
     <Project Path="tests/HybridAgentDeploy.Core.Testing/HybridAgentDeploy.Core.Testing.csproj" />
     <Project Path="tests/HybridAgentDeploy.Core.Tests/HybridAgentDeploy.Core.Tests.csproj" />

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Presentation only. All orchestration, validation, and state transitions live in Core
+    (CLAUDE.md, PRD 5.2). If a code path can only be exercised through this project, it is in
+    the wrong place.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>hybridagentdeploy</AssemblyName>
+    <RootNamespace>HybridAgentDeploy.Cli</RootNamespace>
+
+    <!-- The CLI is the escape hatch for hosts with no desktop, including Server Core
+         (PRD-OPEN-Q: Q5), so it must not depend on the Windows Desktop targeting pack. -->
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HybridAgentDeploy.Core\HybridAgentDeploy.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="HybridAgentDeploy.Cli.Tests" />
+  </ItemGroup>
+
+</Project>

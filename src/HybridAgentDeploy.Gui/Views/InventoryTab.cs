@@ -299,15 +299,15 @@ internal sealed class InventoryTab : UserControl
             return;
         }
 
-        var tagName = Prompt.ForText(
+        // Chosen from the tags that exist rather than typed. A name that does not quite match
+        // an existing tag would create a second one and split the group the operator meant to
+        // build — invisibly, until a later deployment targeted half of it.
+        var tagNames = TagSelectionDialog.Show(
             this,
-            "Tag to apply",
-            "Every domain controller named in the file will be given this tag." +
-            Environment.NewLine + Environment.NewLine +
-            "Import selects and tags controllers already discovered from Active Directory; it " +
-            "does not add new ones.");
+            Presentation.TagList.Build(_main.AllTags, _main.Inventory),
+            dialog.FileName);
 
-        if (string.IsNullOrWhiteSpace(tagName))
+        if (tagNames is null || tagNames.Count == 0)
         {
             return;
         }
@@ -320,7 +320,7 @@ internal sealed class InventoryTab : UserControl
         ImportReport report;
         try
         {
-            report = await service.ImportFileAsync(dialog.FileName, [tagName], false, CancellationToken.None);
+            report = await service.ImportFileAsync(dialog.FileName, tagNames, false, CancellationToken.None);
         }
         catch (Exception ex) when (ex is InventoryNotEnumeratedException or FileNotFoundException)
         {
@@ -330,7 +330,9 @@ internal sealed class InventoryTab : UserControl
 
         await _main.RefreshInventoryAsync();
 
-        var message = $"{report.Matched.Count} domain controller(s) tagged '{tagName}'.";
+        var message =
+            $"{report.Matched.Count} domain controller(s) tagged " +
+            string.Join(", ", tagNames.Select(t => $"'{t}'")) + ".";
 
         if (report.Unmatched.Count > 0)
         {

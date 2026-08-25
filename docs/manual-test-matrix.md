@@ -146,6 +146,9 @@ messages, and arranging a failure is what the lab is for.
 | Validate with cloud mode **on** | The four root-domain DCs read "migrates to cloud" in amber; `RnD-DC` reads "ready - reinstall" |
 | Validate with cloud mode **off** | `RnD-DC` reads "stays on cloud" in amber; the other four read "ready - upgrade" — they are already on Change Auditor, so nothing changes mode |
 | Enter `DEFAULT` with cloud mode on | Amber warning naming both controls; Start stays **enabled** |
+| Type a GUID, restart the tool | The GUID is filled in again |
+| Type a GUID in cloud mode, then untick cloud mode | The box swaps to the remembered Change Auditor name, not the GUID. Re-tick and the GUID returns |
+| Clear the box, start a run, restart | Nothing is prefilled — a cleared value is forgotten, not remembered as empty |
 | Enter a GUID with cloud mode off | The mirror-image warning; Start stays **enabled** |
 | Click Validate | Confirmation lists the five steps and says plainly that nothing is installed |
 | During the run | Progress tab shows the pacing line, live per-target stages, and the busy-slot count |
@@ -161,7 +164,7 @@ messages, and arranging a failure is what the lab is for.
 
 ## What automated tests already cover
 
-Do not spend manual time re-checking these — 477 automated tests cover them, and the lab
+Do not spend manual time re-checking these — 490 automated tests cover them, and the lab
 tests run against real domain controllers:
 
 - Exit-code mapping for every row of §10.1, including 1618 retry and the 3010/1641 successes.

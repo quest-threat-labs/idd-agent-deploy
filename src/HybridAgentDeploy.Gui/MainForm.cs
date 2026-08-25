@@ -48,6 +48,7 @@ internal sealed class MainForm : Form
         DomainControllers = new DomainControllerRepository(connections);
         Tags = new TagRepository(connections);
         Deployments = new DeploymentRepository(connections);
+        Settings = new AppSettingRepository(connections);
         TargetSelector = new TargetSelector(DomainControllers, Tags);
         Resolver = new DnsHostResolver();
         MsiInspector = new MsiInspector();
@@ -90,6 +91,9 @@ internal sealed class MainForm : Form
     public TagRepository Tags { get; }
 
     public DeploymentRepository Deployments { get; }
+
+    /// <summary>What the tool remembers between sessions — see <see cref="AppSettingRepository"/>.</summary>
+    public AppSettingRepository Settings { get; }
 
     public TargetSelector TargetSelector { get; }
 

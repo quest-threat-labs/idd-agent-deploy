@@ -18,6 +18,17 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!--
+      English only. Microsoft.PowerShell.SDK ships localised resources in thirteen languages,
+      which cost 20 MB of the published bundle - and this tool's own interface and error text
+      are English regardless, so a Japanese-locale jump host would get an English window
+      containing one German-or-whatever sentence from a PowerShell exception. That is not a
+      better outcome than English throughout.
+
+      NFR4 expects the bundle to live on a share, where every megabyte is paid on each launch.
+    -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <!--

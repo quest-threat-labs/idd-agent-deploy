@@ -117,6 +117,23 @@ if ($desktop -notmatch 'Microsoft\.WindowsDesktop\.App') {
           'The GUI would fail to start on a machine with no .NET installed.'
 }
 
+# The two trims of Directory.Build.props / .targets, asserted rather than assumed. Both are
+# silent when they stop working — a NuGet update that renames the contentFiles path, or a
+# project that overrides SatelliteResourceLanguages, would quietly add 27 MB back.
+if (Test-Path (Join-Path $out 'ref')) {
+    throw 'ref\ is present in the bundle. RemovePowerShellReferenceAssembliesFromPublish in ' +
+          'Directory.Build.targets is no longer matching - check whether the PowerShell SDK ' +
+          'package changed where it puts its contentFiles.'
+}
+
+$locales = Get-ChildItem $out -Directory |
+    Where-Object { $_.Name -match '^(cs|de|es|fr|it|ja|ko|pl|pt-BR|ru|tr|zh-Hans|zh-Hant)$' }
+
+if ($locales) {
+    throw ("Localised resource folders are present in the bundle: {0}. " -f ($locales.Name -join ', ')) +
+          'SatelliteResourceLanguages in Directory.Build.props is no longer taking effect.'
+}
+
 # ---------------------------------------------------------------------------------------
 # 4. Operator documentation and the portable-mode sample.
 # ---------------------------------------------------------------------------------------

@@ -7,8 +7,14 @@ This has to be done by hand. WinRM is closed on `TitancorpNPV02` (5985 and 5986 
 and a GUI needs an interactive session anyway, so there is no way to drive it remotely. Ten
 minutes over RDP.
 
-The bundle is already staged at **`C:\HAD-acceptance\`** on the VM. Delete that folder when
-you are done.
+Staged on the VM at **`C:\HAD-acceptance\`**:
+
+| Folder | | |
+|---|---|---|
+| `HybridAgentDeploy\` | 143 MB, 314 files | the bundle — **this is what would ship** |
+| `control-framework-dependent\` | 50 MB, 350 files | test artefact, see step 1. **Never ships.** |
+
+Delete the whole `C:\HAD-acceptance\` folder when you are done.
 
 ---
 

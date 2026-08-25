@@ -275,9 +275,33 @@ travels together.
 .\tools\publish.ps1 -SignToolPath <path> -CertificateThumbprint <sha1>
 ```
 
-Produces `artifacts\HybridAgentDeploy\` — **one folder, both programs, ~168 MB, 637 files**,
+Produces `artifacts\HybridAgentDeploy\` — **one folder, both programs, 143 MB, 314 files**,
 self-contained on `win-x64`. Copy the folder; run `HybridAgentDeploy.exe` or `hadeploy.exe`.
 Nothing needs installing on the machine it runs from.
+
+**The whole folder is the deliverable.** It is copied as a unit — the `.exe` files are
+apphosts, the code and the .NET runtime sit beside them. The only genuinely optional files
+are the three `.pdb`s (152 KB), and they are what turn a stack trace in a log into something
+readable, so they stay.
+
+### Two things trimmed out of it
+
+`Microsoft.PowerShell.SDK` contributes 27 MB the tool never touches. Removed, because NFR4
+expects the bundle to live on a share where every megabyte is paid on each launch:
+
+| Removed | Size | Why it is safe |
+|---|---|---|
+| 13 satellite locale folders | 20 MB | PowerShell's localised messages. This tool's interface and error text are English regardless, so a non-English host would otherwise get an English window containing one translated exception. `SatelliteResourceLanguages` in `Directory.Build.props`. |
+| `ref\` — 167 reference assemblies | 7 MB | They exist so PowerShell's `Add-Type` can compile C# at runtime. This tool never calls it, and the SDK here is only the WinRM **client** — every remote script executes in the target controller's own Windows PowerShell. `Directory.Build.targets`. |
+
+Verified rather than reasoned: a bundle with both removed ran a full validation against five
+lab domain controllers — SMB staging, WinRM session, remote script execution, output parsing,
+cleanup — with results identical to the untrimmed bundle.
+
+`publish.ps1` asserts both trims still happened. Each is silent when it stops working: a
+NuGet update that moves the contentFiles, or a project overriding
+`SatelliteResourceLanguages`, would quietly put 27 MB back. Both assertions were checked by
+breaking the thing they guard.
 
 **One bundle, not two.** The GUI and CLI share one copy of the .NET runtime. Publishing them
 separately would double the payload for no benefit, and NFR4 expects this to live on a share
@@ -288,9 +312,9 @@ none of it and resolves modules from disk.
 
 **Not single-file — Q4 answered by measurement.** Both were published and compared:
 
-| | Size | Entries |
+| | Size | Top-level entries |
 |---|---|---|
-| folder | 169 MB | 304 |
+| folder | 168 MB untrimmed, 143 MB as shipped | many |
 | single-file | 162 MB | 12 — a 166 MB exe *plus* eight native libraries and a `runtimes\` directory |
 
 `PublishSingleFile` does not produce a single file here: `e_sqlite3.dll`, `pwrshplugin.dll`,

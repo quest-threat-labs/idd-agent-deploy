@@ -102,6 +102,11 @@ verification, retrieval, and cleanup; the execution tests run `cmd /c exit` and 
 echo`, which change nothing on the target. Teardown asserts the staging directory is gone,
 so a run that litters a domain controller fails rather than passing quietly.
 
+One test does install the agent — the Phase 3 acceptance test in `EndToEndDeploymentTests`.
+It is gated on `HAD_ALLOW_INSTALL=yes` in addition to `HAD_TEST_DC`, `HAD_TEST_MSI_PATH`,
+and `HAD_TEST_ORG_ID`, so neither a default run nor an ordinary lab run can trigger it by
+accident. Enable it only against a DC that may have software installed on it.
+
 ## Configuration
 
 By default the inventory database and run logs live under
@@ -125,7 +130,7 @@ travels together.
 |---|---|---|
 | 1 | Core foundation | Complete |
 | 2 | Deployment orchestrator | Complete |
-| 3 | `WinRmSmbTransport` | Complete (install path pending approval) |
+| 3 | `WinRmSmbTransport` | Complete |
 | 4 | CLI | Not started |
 | 5 | WinForms GUI | Not started |
 | 6 | Packaging and signing | Not started |

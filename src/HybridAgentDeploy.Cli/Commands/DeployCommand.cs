@@ -216,7 +216,7 @@ internal static class DeployCommand
         {
             output.Warning(
                 $"No tag named '{tag}' exists, so it selected nothing. Check the spelling with " +
-                "`hybridagentdeploy list`.");
+                "`hadeploy list`.");
         }
 
         foreach (var host in selection.UnknownHosts)

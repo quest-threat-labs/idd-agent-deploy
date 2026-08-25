@@ -15,7 +15,23 @@
     <RootNamespace>HybridAgentDeploy.Gui</RootNamespace>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <!--
+      Sets the icon on the executable itself, which is what Explorer and the taskbar read.
+      The window's own icon is set separately in MainForm: the two are different things, and
+      only setting this one leaves the window showing the default WinForms icon.
+
+      Regenerate with tools/make-icon.ps1. The .ico is committed so the build does not depend
+      on the script having been run.
+    -->
+    <ApplicationIcon>appicon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embedded as well as stamped, so MainForm can load it for the window and the Alt-Tab
+         switcher without reaching outside the single published binary. -->
+    <EmbeddedResource Include="appicon.ico" LogicalName="HybridAgentDeploy.appicon.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\HybridAgentDeploy.Core\HybridAgentDeploy.Core.csproj" />

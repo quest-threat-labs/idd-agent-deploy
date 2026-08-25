@@ -177,13 +177,28 @@ misreport what ran against the customer's domain controllers.
 
 The agent installs in one of two modes, and the **Cloud mode (SG=1)** checkbox picks which:
 
-| Checkbox | msiexec | Reports to | Org ID looks like |
+| Checkbox | msiexec | Reports to | The identifier is |
 |---|---|---|---|
-| On | `SG=1` | Identity Defense (cloud) | a tenant GUID |
-| Off | `SG` omitted entirely | Change Auditor (on-premises) | a short name, e.g. `DEFAULT` |
+| On | `SG=1` | Identity Defense (cloud) | the SMP Organization ID — a GUID |
+| Off | `SG` omitted entirely | Change Auditor (on-premises) | the installation name, e.g. `DEFAULT` |
 
 Deploying in Change Auditor mode is **out of scope for v1** — it is untested against a
 Change Auditor server — but nothing in the tool forecloses it.
+
+The field is labelled **Quest SMP Organization ID \ Change Auditor Installation Name**,
+because it is a different thing in each mode and "Org ID" alone told an operator working
+against on-premises Change Auditor nothing about what belonged in it. It still reaches the
+installer as `INSTALLATION_NAME`, and the CLI flag is still `--org-id`.
+
+**The tool remembers it, one value per mode.** Stored in `app_setting` in the inventory
+database — beside the controllers it relates to, so a portable copy carries it along, and two
+forests worked out of two folders never prefill each other's. Remembering a single value
+would have been wrong: switching the checkbox would leave the other product's kind of
+identifier in the box, and the mismatch warning would then fire on a value the tool itself
+had just supplied. It is written when a run starts rather than when one succeeds, because a
+failed deployment is exactly when the operator is about to try again. Nothing secret goes in
+there — this identifier is already recorded in `deployment_run` and written into every run
+log, and SEC1 credential material is still never persisted anywhere.
 
 **Cloud mode off omits `SG` rather than passing `SG=0`.** These are not interchangeable: the
 MSI branches on `NOT SG`, and in Windows Installer that means "undefined or empty", so

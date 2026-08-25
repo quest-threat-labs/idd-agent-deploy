@@ -64,12 +64,19 @@ controller other than installing the agent.
 2. **Inventory** — tick the controllers you want. Filters narrow the list; ticks survive
    changing a filter, and the tool tells you when your selection includes rows you cannot
    currently see.
-3. **Deploy** — choose the MSI, enter the Org ID, and check **Cloud mode**:
+3. **Deploy** — choose the MSI, fill in **Quest SMP Organization ID \ Change Auditor
+   Installation Name**, and check **Cloud mode**:
 
-   | Cloud mode | The agent reports to | Org ID is |
+   | Cloud mode | The agent reports to | That field holds |
    |---|---|---|
-   | On | Identity Defense (cloud) | the tenant GUID |
-   | Off | Change Auditor (on-premises) | a short name, e.g. `DEFAULT` |
+   | On | Identity Defense (cloud) | the SMP Organization ID — a GUID |
+   | Off | Change Auditor (on-premises) | the installation name, e.g. `DEFAULT` |
+
+   The tool remembers this value and fills it in next time — **one per mode**, so switching
+   the checkbox swaps in the identifier that belongs to the other product rather than leaving
+   the wrong kind of value in the box. It is stored in the inventory database beside the
+   controllers it relates to, so a portable copy carries it along. Nothing secret is kept:
+   this identifier is already written into every run log.
 
    Deploying with cloud mode **on** to a controller currently running in Change Auditor mode
    **migrates it to the cloud tenant**. That is supported and it is one-way. Validation says

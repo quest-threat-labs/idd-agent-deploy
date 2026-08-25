@@ -29,6 +29,59 @@ public sealed class SchemaMigrationTests
         }
     }
 
+    /// <summary>
+    /// A database created before a migration existed reaches the same place as a fresh one.
+    /// </summary>
+    /// <remarks>
+    /// The case that matters in the field: an operator who has been using the tool already has
+    /// an inventory with real deployment history in it, and upgrading must add the new table
+    /// without touching what is there. Migrating from empty proves the scripts parse; migrating
+    /// an occupied database proves the upgrade path.
+    /// </remarks>
+    [Fact]
+    public async Task An_existing_database_is_upgraded_without_losing_its_contents()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var connections = new SqliteConnectionFactory(Path.Combine(directory, "inventory.db"), pooling: false);
+
+            // Stop at version 1, as a database written by an earlier build would be.
+            await new SchemaMigrator(connections).MigrateToAsync(1, CancellationToken.None);
+
+            await using (var seed = await connections.OpenAsync(CancellationToken.None))
+            await using (var insert = seed.CreateCommand())
+            {
+                insert.CommandText =
+                    "INSERT INTO domain_controller (fqdn, source, first_seen_utc, last_seen_utc) " +
+                    "VALUES ('dc01.corp.local', 'active_directory', " +
+                    "'2026-01-01T00:00:00.0000000Z', '2026-01-01T00:00:00.0000000Z');";
+                await insert.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+
+            var version = await new SchemaMigrator(connections).MigrateAsync(CancellationToken.None);
+            Assert.Equal(SchemaMigrator.TargetVersion, version);
+
+            await using var connection = await connections.OpenAsync(CancellationToken.None);
+
+            // The new table arrived...
+            await using (var added = connection.CreateCommand())
+            {
+                added.CommandText = "SELECT COUNT(*) FROM app_setting;";
+                Assert.Equal(0, Convert.ToInt32(await added.ExecuteScalarAsync(CancellationToken.None)));
+            }
+
+            // ...and the existing row is still there.
+            await using var kept = connection.CreateCommand();
+            kept.CommandText = "SELECT fqdn FROM domain_controller;";
+            Assert.Equal("dc01.corp.local", (string?)await kept.ExecuteScalarAsync(CancellationToken.None));
+        }
+        finally
+        {
+            Cleanup(directory);
+        }
+    }
+
     [Fact]
     public async Task Migrating_twice_is_a_no_op()
     {
@@ -65,6 +118,7 @@ public sealed class SchemaMigrationTests
     [InlineData("deployment_run")]
     [InlineData("deployment_result")]
     [InlineData("schema_version")]
+    [InlineData("app_setting")]
     public async Task Every_table_in_the_specification_exists(string tableName)
     {
         await using var inventory = await TemporaryInventory.CreateAsync(CancellationToken.None);

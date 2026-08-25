@@ -41,7 +41,18 @@ public sealed class SchemaMigrator
     /// a database already at the target version is left untouched.
     /// </summary>
     /// <returns>The version the database is at once this returns.</returns>
-    public async Task<int> MigrateAsync(CancellationToken ct)
+    public Task<int> MigrateAsync(CancellationToken ct) => MigrateToAsync(int.MaxValue, ct);
+
+    /// <summary>
+    /// Applies migrations up to and including a given version, and no further.
+    /// </summary>
+    /// <remarks>
+    /// Exists so a test can build the database an <em>earlier</em> build of this tool would
+    /// have written, put data in it, and then upgrade — which is the case that matters in the
+    /// field and that migrating from empty does not exercise. Not used by the application,
+    /// which always migrates to the latest.
+    /// </remarks>
+    public async Task<int> MigrateToAsync(int targetVersion, CancellationToken ct)
     {
         await using var connection = await _connections.OpenAsync(ct).ConfigureAwait(false);
 
@@ -49,7 +60,7 @@ public sealed class SchemaMigrator
         var current = await ReadCurrentVersionAsync(connection, ct).ConfigureAwait(false);
 
         var pending = DiscoverMigrations()
-            .Where(m => m.Version > current)
+            .Where(m => m.Version > current && m.Version <= targetVersion)
             .OrderBy(m => m.Version)
             .ToList();
 

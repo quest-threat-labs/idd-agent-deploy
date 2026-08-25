@@ -95,6 +95,16 @@ internal sealed class MainForm : Form
     /// <summary>Every domain controller currently in the inventory, shared by the tabs.</summary>
     public IReadOnlyList<InventoryRow> Inventory { get; private set; } = [];
 
+    /// <summary>
+    /// Every tag that exists, including tags applied to no domain controllers.
+    /// </summary>
+    /// <remarks>
+    /// Loaded from the tag table rather than derived from the tags present on inventory rows.
+    /// A tag applied to nothing is still a tag, and deriving the list from the inventory made
+    /// a newly created one invisible — so creating a tag looked like it had failed.
+    /// </remarks>
+    public IReadOnlyList<Core.Models.TagRecord> AllTags { get; private set; } = [];
+
     /// <summary>What the operator has ticked, tracked by id so filtering cannot drop it.</summary>
     public SelectionState Selection { get; } = new();
 
@@ -109,6 +119,8 @@ internal sealed class MainForm : Form
         var records = await DomainControllers.GetAllAsync(includeInactive: false, CancellationToken.None);
         var tags = await Tags.GetTagsByDcAsync(CancellationToken.None);
         var lastDeployments = await DomainControllers.GetLastDeploymentsAsync(CancellationToken.None);
+
+        AllTags = await Tags.GetAllAsync(CancellationToken.None);
 
         Inventory =
         [

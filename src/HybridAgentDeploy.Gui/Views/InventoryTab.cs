@@ -126,7 +126,9 @@ internal sealed class InventoryTab : UserControl
         var previousTag = _tagFilter.SelectedItem as string;
         var previousSite = _siteFilter.SelectedItem as string;
 
-        RebindChoices(_tagFilter, InventoryFilter.TagChoices(_main.Inventory), previousTag);
+        // Every tag, not only those currently applied, so a tag created a moment ago appears
+        // here too. Filtering by an empty tag shows an empty grid, which is the honest answer.
+        RebindChoices(_tagFilter, [.. _main.AllTags.Select(t => t.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase)], previousTag);
         RebindChoices(_siteFilter, InventoryFilter.SiteChoices(_main.Inventory), previousSite);
 
         ApplyFilters();
@@ -405,7 +407,15 @@ internal sealed class BusyScope : IDisposable
     }
 }
 
-/// <summary>A single-line text prompt, since WinForms has no built-in one.</summary>
+/// <summary>
+/// A single-line text prompt, since WinForms has no built-in one.
+/// </summary>
+/// <remarks>
+/// Every element sizes itself rather than sitting at a hard-coded pixel position. The first
+/// version placed 75-pixel-wide OK and Cancel buttons at absolute coordinates, which clipped
+/// their labels — the same mistake as the main window's action bar, in the one place an
+/// operator has to read a button to know what it does.
+/// </remarks>
 internal static class Prompt
 {
     public static string? ForText(IWin32Window owner, string title, string message, string initial = "")
@@ -417,15 +427,52 @@ internal static class Prompt
             StartPosition = FormStartPosition.CenterParent,
             MinimizeBox = false,
             MaximizeBox = false,
-            ClientSize = new Size(460, 190),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(14),
         };
 
-        var label = new Label { Text = message, Left = 12, Top = 12, Width = 436, Height = 90 };
-        var input = new TextBox { Left = 12, Top = 108, Width = 436, Text = initial };
-        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Left = 292, Top = 142, Width = 75 };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 373, Top = 142, Width = 75 };
+        var label = new Label
+        {
+            Text = message,
+            AutoSize = true,
+            MaximumSize = new Size(460, 0),
+            Margin = new Padding(3, 3, 3, 10),
+        };
 
-        form.Controls.AddRange([label, input, ok, cancel]);
+        var input = new TextBox { Text = initial, Width = 460, Margin = new Padding(3, 3, 3, 12) };
+
+        var ok = Ui.Button("OK");
+        ok.DialogResult = DialogResult.OK;
+
+        var cancel = Ui.Button("Cancel");
+        cancel.DialogResult = DialogResult.Cancel;
+
+        var buttons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.RightToLeft,
+            Dock = DockStyle.Fill,
+            WrapContents = false,
+        };
+
+        // Right-to-left flow puts Cancel rightmost with OK beside it, the Windows convention.
+        buttons.Controls.Add(cancel);
+        buttons.Controls.Add(ok);
+
+        var layout = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Dock = DockStyle.Fill,
+        };
+
+        layout.Controls.AddRange([label, input, buttons]);
+        form.Controls.Add(layout);
+
         form.AcceptButton = ok;
         form.CancelButton = cancel;
 

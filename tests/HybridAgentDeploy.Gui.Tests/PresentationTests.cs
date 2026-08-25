@@ -461,3 +461,90 @@ public sealed class DeploymentFormStateTests
         Assert.Equal(["(no site recorded): 1", "Belfast: 1", "London: 2"], summary);
     }
 }
+
+/// <summary>
+/// The tag list on the Tags screen (PRD 8.2).
+/// </summary>
+/// <remarks>
+/// Regression cover for a reported bug: "Create tag..." appeared to do nothing. The tag row
+/// was written correctly, but the list was built from the tags present on inventory rows, so a
+/// tag applied to no domain controllers did not appear. Creating a tag and then applying it is
+/// the obvious order to work in, which made this the first thing an operator would hit.
+/// </remarks>
+public sealed class TagListTests
+{
+    private static readonly IReadOnlyList<InventoryRow> Inventory =
+    [
+        InventoryFilterTests.Row("dc01.corp.local", "London", ["pilot"], null, id: 1),
+        InventoryFilterTests.Row("dc02.corp.local", "London", ["pilot", "gc"], null, id: 2),
+    ];
+
+    [Fact]
+    public void A_tag_applied_to_nothing_still_appears()
+    {
+        var list = TagList.Build([Tag("pilot"), Tag("brand-new")], Inventory);
+
+        Assert.Equal(["brand-new", "pilot"], list.Select(t => t.Name));
+        Assert.Equal(0, list.Single(t => t.Name == "brand-new").DomainControllerCount);
+    }
+
+    [Fact]
+    public void Counts_come_from_the_inventory()
+    {
+        var list = TagList.Build([Tag("pilot"), Tag("gc")], Inventory);
+
+        Assert.Equal(2, list.Single(t => t.Name == "pilot").DomainControllerCount);
+        Assert.Equal(1, list.Single(t => t.Name == "gc").DomainControllerCount);
+    }
+
+    [Fact]
+    public void Counts_match_tags_case_insensitively()
+    {
+        var list = TagList.Build([Tag("PILOT")], Inventory);
+
+        Assert.Equal(2, Assert.Single(list).DomainControllerCount);
+    }
+
+    [Fact]
+    public void Tags_are_listed_alphabetically_regardless_of_case()
+    {
+        var list = TagList.Build([Tag("zulu"), Tag("Alpha"), Tag("mike")], Inventory);
+
+        Assert.Equal(["Alpha", "mike", "zulu"], list.Select(t => t.Name));
+    }
+
+    /// <summary>
+    /// An empty tag reads as empty rather than as "(0 domain controllers)", which an operator
+    /// could mistake for a failure to create it.
+    /// </summary>
+    [Fact]
+    public void An_empty_tag_describes_itself_plainly()
+    {
+        var empty = Assert.Single(TagList.Build([Tag("fresh")], []));
+
+        Assert.Contains("no domain controllers yet", empty.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(1, "1 domain controller)")]
+    [InlineData(2, "2 domain controllers)")]
+    public void The_count_is_pluralised(int count, string expected)
+    {
+        var rows = Enumerable.Range(1, count)
+            .Select(i => InventoryFilterTests.Row($"dc{i:00}.corp.local", "London", ["t"], null, id: i))
+            .ToList();
+
+        Assert.Contains(expected, Assert.Single(TagList.Build([Tag("t")], rows)).ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_inventory_with_no_tags_yields_every_tag_at_zero()
+    {
+        var list = TagList.Build([Tag("a"), Tag("b")], [InventoryFilterTests.Row("dc01.corp.local", "London", [], null)]);
+
+        Assert.Equal(2, list.Count);
+        Assert.All(list, t => Assert.Equal(0, t.DomainControllerCount));
+    }
+
+    private static TagRecord Tag(string name) => new() { Name = name };
+}

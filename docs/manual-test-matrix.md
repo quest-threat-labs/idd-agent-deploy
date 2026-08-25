@@ -111,6 +111,8 @@ flight.
 | Start with an empty inventory | Grid empty; Deploy tab blocks with "Select at least one domain controller" |
 | Enumerate | All five DCs appear with site and OS; tags and history preserved across re-runs |
 | Filter by tag, then Select all | Only visible rows are ticked; the status line reports hidden selections |
+| Filter by the forest root domain | Child-domain controllers are excluded — 4 of 5 in this lab, not 5 |
+| Type the root domain into Name instead | Every controller matches, including the child domain's. This is the difference the domain filter exists for |
 | Tick DCs, then change the filter | Selection count is unchanged; hidden count appears |
 | Deploy with hidden selections | Confirmation dialog says "N of these are hidden by the current filter" |
 | Pick a non-agent MSI | Warning about the product name, but deployment is still permitted (§5.5) |
@@ -146,7 +148,7 @@ messages, and arranging a failure is what the lab is for.
 
 ## What automated tests already cover
 
-Do not spend manual time re-checking these — 433 automated tests cover them, and the lab
+Do not spend manual time re-checking these — 441 automated tests cover them, and the lab
 tests run against real domain controllers:
 
 - Exit-code mapping for every row of §10.1, including 1618 retry and the 3010/1641 successes.

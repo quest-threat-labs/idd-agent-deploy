@@ -12,6 +12,18 @@ internal sealed class InventoryTab : UserControl
 {
     private const string AnyChoice = "(any)";
 
+    /// <summary>
+    /// Starting widths for the filter dropdowns, before they are sized to the forest's own
+    /// names (see <see cref="Ui.SizeToWidestItem"/>).
+    /// </summary>
+    /// <remarks>
+    /// The domain dropdown starts wider because a domain name is an FQDN and a child domain's
+    /// is longer than its parent's, so it is the one most likely to need the room.
+    /// </remarks>
+    private const int DomainFilterWidth = 210;
+
+    private const int NarrowFilterWidth = 150;
+
     private readonly MainForm _main;
 
     private readonly DataGridView _grid = new()
@@ -29,8 +41,18 @@ internal sealed class InventoryTab : UserControl
     };
 
     private readonly TextBox _fqdnFilter = new() { Width = 200, PlaceholderText = "filter by name..." };
-    private readonly ComboBox _tagFilter = new() { Width = 150, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly ComboBox _siteFilter = new() { Width = 150, DropDownStyle = ComboBoxStyle.DropDownList };
+
+    /// <summary>
+    /// Narrows the grid to one Active Directory domain.
+    /// </summary>
+    /// <remarks>
+    /// The width here is a starting point; it is recomputed from the forest's own domain names
+    /// each time the list is rebound. See <see cref="Ui.SizeToWidestItem"/>.
+    /// </remarks>
+    private readonly ComboBox _domainFilter = new() { Width = DomainFilterWidth, DropDownStyle = ComboBoxStyle.DropDownList };
+
+    private readonly ComboBox _tagFilter = new() { Width = NarrowFilterWidth, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly ComboBox _siteFilter = new() { Width = NarrowFilterWidth, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox _outcomeFilter = new() { Width = 160, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _status = new() { AutoSize = true, Padding = new Padding(8, 8, 0, 0) };
 
@@ -63,6 +85,7 @@ internal sealed class InventoryTab : UserControl
         };
 
         _fqdnFilter.TextChanged += (_, _) => ApplyFilters();
+        _domainFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
         _tagFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
         _siteFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
         _outcomeFilter.SelectedIndexChanged += (_, _) => ApplyFilters();
@@ -138,8 +161,12 @@ internal sealed class InventoryTab : UserControl
 
     private Control BuildFilterBar()
     {
+        // Ordered as the grid's columns are — name, domain, then the rest — so an operator
+        // reading across the filter bar and then down a column is looking at the same sequence
+        // in both places.
         return Ui.Bar(
             Ui.Label("Name:"), _fqdnFilter,
+            Ui.Label("Domain:"), _domainFilter,
             Ui.Label("Tag:"), _tagFilter,
             Ui.Label("Site:"), _siteFilter,
             Ui.Label("Last outcome:"), _outcomeFilter);
@@ -155,10 +182,17 @@ internal sealed class InventoryTab : UserControl
         });
 
         AddTextColumn("fqdn", "FQDN", 100);
+
+        // Beside the FQDN, which already ends in it. Shown as a column of its own because in a
+        // multi-domain forest the domain is the boundary an operator scopes work to, and the
+        // FQDN column truncates — which is to say the one piece of it that gets cut off is the
+        // domain.
+        AddTextColumn("domain", "Domain", 108);
+
         AddTextColumn("site", "Site", 55);
-        AddTextColumn("os", "OS", 90);
+        AddTextColumn("os", "OS", 62);
         AddTextColumn("rodc", "RODC", 28);
-        AddTextColumn("tags", "Tags", 70);
+        AddTextColumn("tags", "Tags", 58);
         AddTextColumn("version", "Last version", 55);
         AddTextColumn("deployed", "Last deployed (UTC)", 70);
         AddTextColumn("outcome", "Last outcome", 65);
@@ -181,18 +215,37 @@ internal sealed class InventoryTab : UserControl
     /// <summary>Rebuilds the dropdown choices and re-applies the current filters.</summary>
     public void BindInventory()
     {
+        var previousDomain = _domainFilter.SelectedItem as string;
         var previousTag = _tagFilter.SelectedItem as string;
         var previousSite = _siteFilter.SelectedItem as string;
 
         // Every tag, not only those currently applied, so a tag created a moment ago appears
         // here too. Filtering by an empty tag shows an empty grid, which is the honest answer.
-        RebindChoices(_tagFilter, [.. _main.AllTags.Select(t => t.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase)], previousTag);
-        RebindChoices(_siteFilter, InventoryFilter.SiteChoices(_main.Inventory), previousSite);
+        RebindChoices(
+            _tagFilter,
+            [.. _main.AllTags.Select(t => t.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase)],
+            previousTag,
+            NarrowFilterWidth);
+
+        RebindChoices(
+            _domainFilter, InventoryFilter.DomainChoices(_main.Inventory), previousDomain, DomainFilterWidth);
+
+        RebindChoices(
+            _siteFilter, InventoryFilter.SiteChoices(_main.Inventory), previousSite, NarrowFilterWidth);
 
         ApplyFilters();
     }
 
-    private static void RebindChoices(ComboBox combo, IReadOnlyList<string> choices, string? previous)
+    /// <param name="minimumWidth">
+    /// The control's declared width, passed in rather than read from the control: reading the
+    /// current width would let each rebind raise the floor, so a dropdown widened for a long
+    /// name could never narrow again once that name left the inventory.
+    /// </param>
+    private static void RebindChoices(
+        ComboBox combo,
+        IReadOnlyList<string> choices,
+        string? previous,
+        int minimumWidth)
     {
         combo.BeginUpdate();
         combo.Items.Clear();
@@ -201,6 +254,10 @@ internal sealed class InventoryTab : UserControl
         {
             combo.Items.Add(choice);
         }
+
+        // These lists hold the customer's own domain, site, and tag names, so the right width
+        // is not knowable when the control is constructed. Never narrower than it started.
+        Ui.SizeToWidestItem(combo, minimumWidth);
 
         // Keep the operator's filter across a refresh where the value still exists.
         combo.SelectedItem = previous is not null && combo.Items.Contains(previous) ? previous : AnyChoice;
@@ -212,6 +269,7 @@ internal sealed class InventoryTab : UserControl
         var criteria = new InventoryFilterCriteria
         {
             FqdnContains = _fqdnFilter.Text,
+            Domain = Chosen(_domainFilter),
             Tag = Chosen(_tagFilter),
             Site = Chosen(_siteFilter),
             Outcome = (OutcomeFilter)Math.Max(0, _outcomeFilter.SelectedIndex),
@@ -238,8 +296,9 @@ internal sealed class InventoryTab : UserControl
                 var index = _grid.Rows.AddRow(
                     _main.Selection.IsSelected(row.DcId),
                     row.Fqdn,
+                    row.Domain,
                     row.SiteName,
-                    row.OsVersion,
+                    row.OsShortName,
                     row.IsReadOnly ? "yes" : string.Empty,
                     string.Join(", ", row.Tags),
                     row.LastDeployedVersion,
@@ -248,6 +307,10 @@ internal sealed class InventoryTab : UserControl
 
                 var gridRow = _grid.Rows[index];
                 gridRow.Tag = row;
+
+                // The column shows the OS with its "Windows Server" prefix dropped; the full
+                // string stays one hover away rather than being discarded.
+                gridRow.Cells["os"].ToolTipText = row.OsVersion ?? string.Empty;
 
                 // PRD 8.1: the outcome column is colour-coded. The cell also carries the text,
                 // so colour is the fast path rather than the only one.

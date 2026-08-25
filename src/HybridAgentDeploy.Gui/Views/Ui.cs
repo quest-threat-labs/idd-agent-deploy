@@ -110,6 +110,41 @@ internal static class Ui
     }
 
     /// <summary>
+    /// Widens a drop-down so its longest entry is readable in the closed control.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The values in these lists come from the customer's forest — domain names, site names,
+    /// tag names — so no width chosen here can be right for all of them. A filter whose
+    /// selected value is clipped is one the operator cannot confirm they set correctly before
+    /// deploying under it: <c>research.corp.local</c> and <c>research.corp.loca…</c> read the
+    /// same, and so would two sibling domains sharing a long prefix.
+    /// </para>
+    /// <para>
+    /// Capped, because one pathological name must not push the rest of the filter bar off the
+    /// screen. Past the cap the entry is still readable in the open list, which is the lesser
+    /// problem.
+    /// </para>
+    /// </remarks>
+    public static void SizeToWidestItem(ComboBox combo, int minimumWidth, int maximumWidth = 320)
+    {
+        ArgumentNullException.ThrowIfNull(combo);
+
+        var widest = 0;
+        foreach (var item in combo.Items)
+        {
+            var text = item?.ToString();
+            if (!string.IsNullOrEmpty(text))
+            {
+                widest = Math.Max(widest, TextRenderer.MeasureText(text, combo.Font).Width);
+            }
+        }
+
+        // Room for the drop-down arrow and the control's own borders on top of the text.
+        combo.Width = Math.Clamp(widest + SystemInformation.VerticalScrollBarWidth + 14, minimumWidth, maximumWidth);
+    }
+
+    /// <summary>
     /// A label that derives its font from whatever its container is using.
     /// </summary>
     /// <remarks>

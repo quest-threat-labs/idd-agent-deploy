@@ -14,13 +14,21 @@ namespace HybridAgentDeploy.Gui.Tests;
 /// </remarks>
 public sealed class InventoryFilterTests
 {
+    /// <summary>
+    /// Four controllers in the forest root and one in a child domain.
+    /// </summary>
+    /// <remarks>
+    /// The child domain matters: its name ends in the parent's, which is what makes filtering
+    /// by domain a different question from typing the domain into the name box.
+    /// </remarks>
     private static readonly IReadOnlyList<InventoryRow> Rows =
     [
-        Row("dc01.corp.local", "London", ["pilot"], DeploymentOutcome.Success),
-        Row("dc02.corp.local", "London", ["pilot", "gc"], DeploymentOutcome.Failure),
-        Row("dc03.corp.local", "Belfast", [], DeploymentOutcome.SuccessRebootRequired),
-        Row("dc04.corp.local", "Belfast", ["rodc"], null),
-        Row("branch-dc.corp.local", "Reading", ["pilot"], DeploymentOutcome.Timeout),
+        Row("dc01.corp.local", "London", ["pilot"], DeploymentOutcome.Success, domain: "corp.local"),
+        Row("dc02.corp.local", "London", ["pilot", "gc"], DeploymentOutcome.Failure, domain: "corp.local"),
+        Row("dc03.corp.local", "Belfast", [], DeploymentOutcome.SuccessRebootRequired, domain: "corp.local"),
+        Row("dc04.corp.local", "Belfast", ["rodc"], null, domain: "corp.local"),
+        Row("branch-dc.research.corp.local", "Reading", ["pilot"], DeploymentOutcome.Timeout,
+            domain: "research.corp.local"),
     ];
 
     [Fact]
@@ -35,7 +43,7 @@ public sealed class InventoryFilterTests
     {
         var result = InventoryFilter.Apply(Rows, new InventoryFilterCriteria { FqdnContains = "BRANCH" });
 
-        Assert.Equal(["branch-dc.corp.local"], result.Select(r => r.Fqdn));
+        Assert.Equal(["branch-dc.research.corp.local"], result.Select(r => r.Fqdn));
     }
 
     [Fact]
@@ -52,6 +60,34 @@ public sealed class InventoryFilterTests
         var result = InventoryFilter.Apply(Rows, new InventoryFilterCriteria { Site = "belfast" });
 
         Assert.Equal(["dc03.corp.local", "dc04.corp.local"], result.Select(r => r.Fqdn));
+    }
+
+    [Fact]
+    public void Filtering_by_domain_is_an_exact_case_insensitive_match()
+    {
+        var result = InventoryFilter.Apply(Rows, new InventoryFilterCriteria { Domain = "RESEARCH.corp.local" });
+
+        Assert.Equal(["branch-dc.research.corp.local"], result.Select(r => r.Fqdn));
+    }
+
+    /// <summary>
+    /// The reason a domain filter earns its place beside the name box.
+    /// </summary>
+    /// <remarks>
+    /// A child domain's name ends in its parent's, so typing the parent into the name box —
+    /// which matches any substring of the FQDN — returns the child's controllers too. An
+    /// operator scoping a deployment to one domain would be handed every domain controller in
+    /// the forest and no indication that had happened.
+    /// </remarks>
+    [Fact]
+    public void Filtering_by_domain_excludes_a_child_domain_where_free_text_would_not()
+    {
+        var byName = InventoryFilter.Apply(Rows, new InventoryFilterCriteria { FqdnContains = "corp.local" });
+        var byDomain = InventoryFilter.Apply(Rows, new InventoryFilterCriteria { Domain = "corp.local" });
+
+        Assert.Equal(5, byName.Count);
+        Assert.Equal(4, byDomain.Count);
+        Assert.DoesNotContain(byDomain, r => r.Fqdn == "branch-dc.research.corp.local");
     }
 
     [Theory]
@@ -74,7 +110,7 @@ public sealed class InventoryFilterTests
     {
         var result = InventoryFilter.Apply(Rows, new InventoryFilterCriteria { Outcome = OutcomeFilter.Failure });
 
-        Assert.Equal(["dc02.corp.local", "branch-dc.corp.local"], result.Select(r => r.Fqdn));
+        Assert.Equal(["dc02.corp.local", "branch-dc.research.corp.local"], result.Select(r => r.Fqdn));
     }
 
     [Fact]
@@ -90,7 +126,13 @@ public sealed class InventoryFilterTests
     [Fact]
     public void Whitespace_only_criteria_do_not_filter()
     {
-        var criteria = new InventoryFilterCriteria { FqdnContains = "   ", Tag = "  ", Site = "" };
+        var criteria = new InventoryFilterCriteria
+        {
+            FqdnContains = "   ",
+            Domain = " ",
+            Tag = "  ",
+            Site = "",
+        };
 
         Assert.Equal(Rows.Count, InventoryFilter.Apply(Rows, criteria).Count);
         Assert.False(criteria.IsFiltering);
@@ -99,8 +141,50 @@ public sealed class InventoryFilterTests
     [Fact]
     public void Dropdown_choices_are_distinct_and_sorted()
     {
+        Assert.Equal(["corp.local", "research.corp.local"], InventoryFilter.DomainChoices(Rows));
         Assert.Equal(["Belfast", "London", "Reading"], InventoryFilter.SiteChoices(Rows));
         Assert.Equal(["gc", "pilot", "rodc"], InventoryFilter.TagChoices(Rows));
+    }
+
+    /// <summary>
+    /// A controller with no recorded domain does not put a blank entry in the dropdown, where
+    /// it would look like a filter that selects nothing.
+    /// </summary>
+    [Fact]
+    public void Controllers_with_no_recorded_domain_are_left_out_of_the_choices()
+    {
+        IReadOnlyList<InventoryRow> rows =
+        [
+            Row("dc01.corp.local", "London", [], null, domain: "corp.local"),
+            Row("dc02.corp.local", "London", [], null, domain: null),
+            Row("dc03.corp.local", "London", [], null, domain: "   "),
+        ];
+
+        Assert.Equal(["corp.local"], InventoryFilter.DomainChoices(rows));
+    }
+
+    /// <summary>
+    /// The OS column drops the two words every row shares, to buy width for the domain column.
+    /// </summary>
+    /// <remarks>
+    /// Anything not matching the prefix is left exactly as recorded. Guessing at an unfamiliar
+    /// OS string would be a way to hide the fact that a target is not what the operator thinks
+    /// it is.
+    /// </remarks>
+    [Theory]
+    [InlineData("Windows Server 2025 Datacenter", "2025 Datacenter")]
+    [InlineData("Windows Server 2019 Standard", "2019 Standard")]
+    [InlineData("windows server 2016", "2016")]
+    [InlineData("Windows Server 2022 Datacenter  ", "2022 Datacenter")]
+    [InlineData("Some Other Operating System", "Some Other Operating System")]
+    [InlineData("Windows Server", "Windows Server")]
+    [InlineData(null, null)]
+    [InlineData("", "")]
+    public void The_os_column_drops_the_windows_server_prefix(string? stored, string? shown)
+    {
+        var row = Row("dc01.corp.local", "London", [], null) with { OsVersion = stored };
+
+        Assert.Equal(shown, row.OsShortName);
     }
 
     internal static InventoryRow Row(
@@ -108,10 +192,12 @@ public sealed class InventoryFilterTests
         string? site,
         string[] tags,
         DeploymentOutcome? outcome,
-        long id = 0) => new()
+        long id = 0,
+        string? domain = null) => new()
         {
             DcId = id == 0 ? fqdn.GetHashCode() : id,
             Fqdn = fqdn,
+            Domain = domain,
             SiteName = site,
             Tags = tags,
             LastDeployment = outcome is null

@@ -24,6 +24,35 @@ public sealed record InventoryRow
     /// <summary>Null when this DC has never been deployed to.</summary>
     public DcLastDeployment? LastDeployment { get; init; }
 
+    /// <summary>
+    /// The OS with its <c>Windows Server</c> prefix removed — <c>2025 Datacenter</c>.
+    /// </summary>
+    /// <remarks>
+    /// Every row in a domain controller inventory begins with the same two words, so those two
+    /// words are the one part of the string carrying no information while costing the most
+    /// width. Dropping them from the display let the column shrink far enough to fit a domain
+    /// column beside the FQDN without truncating anything that matters. The full value is still
+    /// in <see cref="OsVersion"/> and is shown as the cell's tooltip.
+    /// </remarks>
+    public string? OsShortName
+    {
+        get
+        {
+            const string Prefix = "Windows Server ";
+
+            if (string.IsNullOrWhiteSpace(OsVersion))
+            {
+                return OsVersion;
+            }
+
+            var trimmed = OsVersion.Trim();
+
+            return trimmed.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase)
+                ? trimmed[Prefix.Length..]
+                : trimmed;
+        }
+    }
+
     public string? LastDeployedVersion => LastDeployment?.MsiProductVersion;
 
     public string? LastDeployedUtc => LastDeployment?.CompletedUtc;

@@ -13,16 +13,29 @@ public enum OutcomeFilter
 }
 
 /// <summary>
-/// The inventory grid's filter settings (PRD 8.1): free text on FQDN, a tag, a site, and the
-/// last outcome.
+/// The inventory grid's filter settings (PRD 8.1): free text on FQDN, a domain, a tag, a
+/// site, and the last outcome.
 /// </summary>
 /// <remarks>
-/// An empty or null value means "do not filter on this". The four criteria combine with AND,
-/// which is what an operator narrowing a list expects.
+/// An empty or null value means "do not filter on this". The criteria combine with AND, which
+/// is what an operator narrowing a list expects.
 /// </remarks>
 public sealed record InventoryFilterCriteria
 {
     public string? FqdnContains { get; init; }
+
+    /// <summary>
+    /// An exact domain name, as recorded by enumeration.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from typing the domain into <see cref="FqdnContains"/>, which matches any
+    /// substring: in a forest with <c>corp.local</c> and <c>research.corp.local</c>, typing
+    /// the parent domain's name matches every controller in both. An operator scoping a
+    /// deployment to one domain needs the exact answer, not the one that happens to include
+    /// the child.
+    /// </remarks>
+    public string? Domain { get; init; }
+
     public string? Tag { get; init; }
     public string? Site { get; init; }
     public OutcomeFilter Outcome { get; init; } = OutcomeFilter.Any;
@@ -31,6 +44,7 @@ public sealed record InventoryFilterCriteria
 
     public bool IsFiltering =>
         !string.IsNullOrWhiteSpace(FqdnContains) ||
+        !string.IsNullOrWhiteSpace(Domain) ||
         !string.IsNullOrWhiteSpace(Tag) ||
         !string.IsNullOrWhiteSpace(Site) ||
         Outcome != OutcomeFilter.Any;
@@ -73,6 +87,12 @@ public static class InventoryFilter
             return false;
         }
 
+        if (!string.IsNullOrWhiteSpace(criteria.Domain) &&
+            !string.Equals(row.Domain, criteria.Domain.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         if (!string.IsNullOrWhiteSpace(criteria.Tag) &&
             !row.Tags.Contains(criteria.Tag.Trim(), StringComparer.OrdinalIgnoreCase))
         {
@@ -102,6 +122,21 @@ public static class InventoryFilter
 
         _ => true,
     };
+
+    /// <summary>
+    /// Distinct domain names present in the inventory, for the domain dropdown.
+    /// </summary>
+    /// <remarks>
+    /// Sorted alphabetically rather than by forest hierarchy. A child domain therefore sits
+    /// beside its parent — <c>corp.local</c> then <c>research.corp.local</c> — which is how an
+    /// operator scans a list, and reconstructing the tree from names alone would be guesswork.
+    /// </remarks>
+    public static IReadOnlyList<string> DomainChoices(IEnumerable<InventoryRow> rows) =>
+        [.. rows.Select(r => r.Domain)
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Select(d => d!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>Distinct site names present in the inventory, for the site dropdown.</summary>
     public static IReadOnlyList<string> SiteChoices(IEnumerable<InventoryRow> rows) =>

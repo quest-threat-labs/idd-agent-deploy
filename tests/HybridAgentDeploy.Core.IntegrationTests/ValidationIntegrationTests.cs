@@ -66,9 +66,17 @@ public sealed class ValidationIntegrationTests
             Assert.Contains(outcome.Checks, c => c.Name == "Can stage files" && c.Passed);
             Assert.Contains(outcome.Checks, c => c.Name == "Can run commands" && c.Passed);
             Assert.Contains(outcome.Checks, c => c.Name == "Installed agent");
+            Assert.Contains(outcome.Checks, c => c.Name == "Connection mode");
 
             // Whatever the DC has, the prediction must be a real one rather than a shrug.
             Assert.NotEqual(PredictedAction.Unknown, outcome.Predicted);
+
+            // Read live from the target rather than from the inventory. Every supported DC is
+            // Server 2016 or later, so this also confirms the build number parsed.
+            Assert.NotNull(outcome.OperatingSystem);
+            Assert.True(
+                outcome.OperatingSystem!.IsSupported,
+                $"{target} reports {outcome.OperatingSystem.Describe()}, below the agent's minimum.");
 
             var log = await File.ReadAllTextAsync(Path.Combine(directory, "validation.log"), Ct);
             Assert.Contains("NOTHING WAS INSTALLED BY THIS RUN", log, StringComparison.Ordinal);
@@ -77,6 +85,38 @@ public sealed class ValidationIntegrationTests
         {
             Delete(directory);
         }
+    }
+
+    /// <summary>
+    /// The connection mode is read from a real domain controller, and running the same target
+    /// under both settings reports a mismatch under exactly one of them.
+    /// </summary>
+    /// <remarks>
+    /// The point of the test is that the answer flips. Asserting a fixed mode would only work
+    /// against a lab whose agents happen to be installed the way the test was written, and
+    /// would pass just as happily against a validator that returned a constant.
+    /// </remarks>
+    [SkippableFact]
+    [Trait("Category", "Integration")]
+    public async Task The_connection_mode_is_read_from_the_target_and_a_mismatch_is_detected()
+    {
+        var target = RequireTarget();
+        var msi = await RequireMsiAsync();
+
+        var cloud = await ValidateOnceAsync(target, msi, cloudMode: true);
+        var onPremises = await ValidateOnceAsync(target, msi, cloudMode: false);
+
+        Skip.If(
+            cloud.InstalledAgent?.Mode is null,
+            $"{target} has no agent installed, or its connection mode could not be read, so " +
+            "there is no mode to mismatch against. Install an agent on it to run this test.");
+
+        // The installed mode does not change between the two runs; the requested one does.
+        Assert.Equal(cloud.InstalledAgent!.Mode, onPremises.InstalledAgent!.Mode);
+        Assert.NotEqual(cloud.HasModeMismatch, onPremises.HasModeMismatch);
+
+        var mismatched = cloud.HasModeMismatch ? cloud : onPremises;
+        Assert.Contains("refuses a mode change", mismatched.Summary, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -113,6 +153,34 @@ public sealed class ValidationIntegrationTests
                 : [];
 
             Assert.Empty(leftovers);
+        }
+        finally
+        {
+            Delete(directory);
+        }
+    }
+
+    /// <summary>Validates one target once, in the given mode, and cleans up its log directory.</summary>
+    private static async Task<ValidationOutcome> ValidateOnceAsync(
+        string target,
+        MsiPackageInfo msi,
+        bool cloudMode)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"had-validate-itest-{Guid.NewGuid():N}");
+
+        try
+        {
+            var request = ValidationRequest.Create(
+                msi,
+                [new DeploymentTarget(1, target, "IntegrationTest")],
+                operatorAccount: OperatorCredential.CurrentWindowsAccountName(),
+                logDirectory: directory,
+                cloudMode: cloudMode);
+
+            var summary = await new ValidationRunner(new WinRmSmbTransport(new TransportOptions()))
+                .ValidateAsync(request, null, Ct);
+
+            return summary.Outcomes.Single();
         }
         finally
         {

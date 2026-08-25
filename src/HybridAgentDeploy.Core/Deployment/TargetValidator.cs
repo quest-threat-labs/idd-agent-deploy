@@ -23,26 +23,44 @@ namespace HybridAgentDeploy.Core.Deployment;
 public sealed class TargetValidator
 {
     /// <summary>
-    /// Reads the installed Change Auditor agent, or "none".
+    /// Reads what the target already has: the installed agent, its connection mode, and the
+    /// operating system.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// One round trip for three facts, because each is a registry read and opening three
+    /// sessions to a domain controller to learn them separately would be three times the cost
+    /// for no gain.
+    /// </para>
     /// <para>
     /// Deliberately contains no operator input — it is a constant authored here — so passing it
     /// to a shell raises none of the concerns SEC10 exists for. Written without double quotes
     /// so that quoting it as a single argument cannot alter it.
     /// </para>
     /// <para>
-    /// Both registry views are read: a 32-bit agent on a 64-bit controller lives under
-    /// WOW6432Node, and missing it would report "no agent" on a host that has one.
+    /// Both registry views are read for the agent: a 32-bit agent on a 64-bit controller lives
+    /// under WOW6432Node, and missing it would report "no agent" on a host that has one. The
+    /// connection mode is read only from the <c>Quest</c> path, which is the single path the
+    /// installer itself reads it from.
+    /// </para>
+    /// <para>
+    /// Each fact is emitted on its own labelled line rather than as one delimited record, so a
+    /// remoting session that prepends a warning or a banner cannot shift the fields.
     /// </para>
     /// </remarks>
-    private const string InstalledAgentScript =
+    private const string TargetStateScript =
         "$ErrorActionPreference='SilentlyContinue'; " +
         "$k=@('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'," +
         "'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'); " +
         "$p=Get-ItemProperty $k | Where-Object { $_.DisplayName -like '*Change Auditor*Agent*' } | " +
         "Select-Object -First 1; " +
-        "if ($p) { $p.DisplayName + '|' + $p.DisplayVersion + '|' + $p.PSChildName } else { 'none' }";
+        "if ($p) { 'AGENT|' + $p.DisplayName + '|' + $p.DisplayVersion + '|' + $p.PSChildName } " +
+        "else { 'AGENT|none' }; " +
+        "$a=Get-ItemProperty 'HKLM:\\SOFTWARE\\Quest\\ChangeAuditor\\Agent'; " +
+        "if ($a -ne $null -and $a.PSObject.Properties.Name -contains 'SgConnectionMode') " +
+        "{ 'MODE|' + $a.SgConnectionMode } else { 'MODE|none' }; " +
+        "$o=Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'; " +
+        "'OS|' + $o.CurrentBuildNumber + '|' + $o.ProductName";
 
     private readonly ITargetTransport _transport;
 
@@ -53,10 +71,15 @@ public sealed class TargetValidator
 
     /// <summary>Validates one target.</summary>
     /// <param name="msi">The package the installed agent is compared against.</param>
+    /// <param name="requestedMode">
+    /// The product this run would configure the agent for, from the cloud-mode setting. Used
+    /// to detect the mode change the installer refuses.
+    /// </param>
     /// <param name="stagingDirectory">Where the probe is written, and removed from.</param>
     public async Task<ValidationOutcome> ValidateAsync(
         DeploymentTarget target,
         MsiPackageInfo msi,
+        AgentMode requestedMode,
         string stagingDirectory,
         TimeSpan timeout,
         DateTimeOffset startedUtc,
@@ -65,6 +88,7 @@ public sealed class TargetValidator
         var checks = new List<ValidationCheck>();
         ErrorCategory? category = null;
         InstalledAgent? installed = null;
+        TargetOperatingSystem? operatingSystem = null;
 
         // Set before the copy is attempted, not after it succeeds. A copy that failed
         // part-way still leaves something behind, and that is precisely the case where
@@ -85,7 +109,7 @@ public sealed class TargetValidator
             if (!preflight.Succeeded)
             {
                 category = preflight.ErrorCategory;
-                return Finish(target, checks, installed, msi, category, startedUtc);
+                return Finish(target, checks, installed, operatingSystem, requestedMode, msi, category, startedUtc);
             }
 
             // 2. Write access, proved by writing. A readable share says nothing about this, and
@@ -114,7 +138,7 @@ public sealed class TargetValidator
                 if (!hashMatches)
                 {
                     category = stageResult.ErrorCategory ?? Models.ErrorCategory.Staging;
-                    return Finish(target, checks, installed, msi, category, startedUtc);
+                    return Finish(target, checks, installed, operatingSystem, requestedMode, msi, category, startedUtc);
                 }
             }
             finally
@@ -142,12 +166,31 @@ public sealed class TargetValidator
             if (!canExecute)
             {
                 category = execution.ErrorCategory ?? Models.ErrorCategory.Connectivity;
-                return Finish(target, checks, installed, msi, category, startedUtc);
+                return Finish(target, checks, installed, operatingSystem, requestedMode, msi, category, startedUtc);
             }
 
-            // 4. What is already installed, so the operator learns before the run whether this
-            //    is an install, an upgrade, a reinstall, or something the installer will refuse.
-            installed = await ReadInstalledAgentAsync(target, timeout, ct).ConfigureAwait(false);
+            // 4. What the target already has, so the operator learns before the run whether
+            //    this is an install, an upgrade, a reinstall, or something the installer will
+            //    refuse — and whether the host can run the agent at all.
+            var state = await ReadTargetStateAsync(target, timeout, ct).ConfigureAwait(false);
+            installed = state.Agent;
+            operatingSystem = state.OperatingSystem;
+
+            // The MSI refuses anything below Server 2016 through a launch condition, so this is
+            // a property of the host rather than of the package: no version of this agent can
+            // be installed here. Reported as a failure for that reason.
+            checks.Add(new ValidationCheck(
+                "Supported operating system",
+                operatingSystem?.IsSupported ?? true,
+                operatingSystem is null
+                    ? "the operating system version could not be read; the installer will check " +
+                      "it itself and refuse anything below Windows Server 2016"
+                    : operatingSystem.IsSupported
+                        ? operatingSystem.Describe()
+                        : $"{target.Fqdn} runs {operatingSystem.Describe()}, and the agent " +
+                          "requires Windows Server 2016 or later. The installer refuses older " +
+                          "versions outright, so this domain controller cannot receive this " +
+                          "package until it is upgraded."));
 
             checks.Add(new ValidationCheck(
                 "Installed agent",
@@ -156,7 +199,22 @@ public sealed class TargetValidator
                     ? "no Change Auditor agent is installed"
                     : $"{installed.DisplayName} {installed.Version}"));
 
-            return Finish(target, checks, installed, msi, category, startedUtc);
+            // Reported whether or not it matches: an operator confirming a run against sixty
+            // controllers wants to see which product each one currently reports to, not only
+            // the ones that disagree.
+            checks.Add(new ValidationCheck(
+                "Connection mode",
+                true,
+                installed is null
+                    ? $"nothing installed; this run would configure the agent for " +
+                      $"{ValidationOutcome.Describe(requestedMode)}"
+                    : installed.Mode is { } mode
+                        ? $"installed for {ValidationOutcome.Describe(mode)}; this run would " +
+                          $"use {ValidationOutcome.Describe(requestedMode)}"
+                        : "an agent is installed but its connection mode could not be read, so " +
+                          "whether this run would change modes cannot be determined"));
+
+            return Finish(target, checks, installed, operatingSystem, requestedMode, msi, category, startedUtc);
         }
         catch (OperationCanceledException)
         {
@@ -169,7 +227,7 @@ public sealed class TargetValidator
                 false,
                 $"Validation of {target.Fqdn} failed unexpectedly: {ex.Message}"));
 
-            return Finish(target, checks, installed, msi, Models.ErrorCategory.Internal, startedUtc);
+            return Finish(target, checks, installed, operatingSystem, requestedMode, msi, Models.ErrorCategory.Internal, startedUtc);
         }
         finally
         {
@@ -193,40 +251,104 @@ public sealed class TargetValidator
         }
     }
 
-    private async Task<InstalledAgent?> ReadInstalledAgentAsync(
+    private async Task<TargetState> ReadTargetStateAsync(
         DeploymentTarget target,
         TimeSpan timeout,
         CancellationToken ct)
     {
         var command = new RemoteCommand(
             "powershell.exe",
-            ["-NoProfile", "-NonInteractive", "-Command", InstalledAgentScript]);
+            ["-NoProfile", "-NonInteractive", "-Command", TargetStateScript]);
 
         var result = await _transport.ExecuteAsync(target.Fqdn, command, timeout, ct).ConfigureAwait(false);
 
-        return ParseInstalledAgent(result.StandardOutput);
+        return ParseTargetState(result.StandardOutput);
     }
 
-    /// <summary>Parses the single line the query script emits.</summary>
-    internal static InstalledAgent? ParseInstalledAgent(string? output)
+    /// <summary>What the query script reported about a target.</summary>
+    internal sealed record TargetState(InstalledAgent? Agent, TargetOperatingSystem? OperatingSystem);
+
+    /// <summary>Parses the labelled lines the query script emits.</summary>
+    /// <remarks>
+    /// Each line is looked up by its label rather than by position, so unexpected output — a
+    /// profile banner, a module's warning — cannot silently shift a field and turn a
+    /// 7.6 agent into a 7.7 one.
+    /// </remarks>
+    internal static TargetState ParseTargetState(string? output)
     {
-        var line = output?
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault(l => l.Length > 0);
+        var lines = output?.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            ?? [];
 
-        if (string.IsNullOrWhiteSpace(line) ||
-            line.Equals("none", StringComparison.OrdinalIgnoreCase))
+        return new TargetState(
+            ParseAgent(Field(lines, "AGENT"), Field(lines, "MODE")),
+            ParseOperatingSystem(Field(lines, "OS")));
+    }
+
+    /// <summary>The last line carrying a label, split into its fields.</summary>
+    /// <remarks>
+    /// The last rather than the first: if anything upstream echoed the script itself, the real
+    /// output is what came after it.
+    /// </remarks>
+    private static string[]? Field(string[] lines, string label)
+    {
+        var prefix = label + "|";
+
+        var line = lines.LastOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal));
+
+        return line?[prefix.Length..].Split('|');
+    }
+
+    private static InstalledAgent? ParseAgent(string[]? agent, string[]? mode)
+    {
+        if (agent is null || agent.Length < 3 || string.IsNullOrWhiteSpace(agent[1]))
         {
             return null;
         }
 
-        var parts = line.Split('|');
-        if (parts.Length < 3 || string.IsNullOrWhiteSpace(parts[1]))
+        if (agent[0].Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
 
-        return new InstalledAgent(parts[0].Trim(), parts[1].Trim(), parts[2].Trim());
+        return new InstalledAgent(
+            agent[0].Trim(), agent[1].Trim(), agent[2].Trim(), ParseMode(mode));
+    }
+
+    /// <summary>
+    /// Maps <c>SgConnectionMode</c> to a product.
+    /// </summary>
+    /// <remarks>
+    /// Anything other than 0 or 1 is reported as unrecognised rather than folded into either
+    /// mode. A wrong answer here would tell the operator a deployment is safe when the
+    /// installer is about to refuse it.
+    /// </remarks>
+    internal static AgentMode? ParseMode(string[]? mode)
+    {
+        var value = mode?.FirstOrDefault()?.Trim();
+
+        if (string.IsNullOrWhiteSpace(value) ||
+            value.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return value switch
+        {
+            "0" => AgentMode.ChangeAuditor,
+            "1" => AgentMode.IdentityDefense,
+            _ => AgentMode.Unrecognised,
+        };
+    }
+
+    internal static TargetOperatingSystem? ParseOperatingSystem(string[]? os)
+    {
+        if (os is null || os.Length == 0 ||
+            !int.TryParse(os[0].Trim(), out var build) || build <= 0)
+        {
+            return null;
+        }
+
+        return new TargetOperatingSystem(build, os.Length > 1 ? os[1].Trim() : null);
     }
 
     /// <summary>
@@ -264,6 +386,8 @@ public sealed class TargetValidator
         DeploymentTarget target,
         List<ValidationCheck> checks,
         InstalledAgent? installed,
+        TargetOperatingSystem? operatingSystem,
+        AgentMode requestedMode,
         MsiPackageInfo msi,
         ErrorCategory? category,
         DateTimeOffset startedUtc) => new()
@@ -271,6 +395,8 @@ public sealed class TargetValidator
             Target = target,
             Checks = checks,
             InstalledAgent = installed,
+            OperatingSystem = operatingSystem,
+            RequestedMode = requestedMode,
             Predicted = Predict(installed, msi),
             ErrorCategory = category,
             StartedUtc = startedUtc,

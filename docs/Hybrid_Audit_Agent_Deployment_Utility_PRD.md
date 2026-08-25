@@ -751,15 +751,18 @@ Experience and no .NET SDK installed, from a UNC path.
 
 ## 17. Open questions
 
+Answers recorded here as they are given, rather than deleting the question — the reasoning
+behind a resolved decision is worth as much later as the decision itself.
+
 | ID | Question | Owner | Default until resolved |
 |---|---|---|---|
-| Q1 | Is `SG=1` ever legitimately omitted or set to 0 for this agent, or is cloud mode the only mode this utility will target? | PM | Expose as a checkbox defaulting to checked. If cloud mode is the only valid mode, simplify to a hardcoded `SG=1` and remove the control. |
-| Q2 | What is the valid format of the Org ID — GUID, opaque string, length bounds? | PM / Change Auditor team | Require non-empty, trim, warn on characters needing quoting. Add strict validation once known. |
+| Q1 | Is `SG=1` ever legitimately omitted or set to 0 for this agent, or is cloud mode the only mode this utility will target? | PM | **ANSWERED 2026-08-25.** Two modes exist. `SG=1` points the agent at the Identity Defense cloud product; on-premises Change Auditor is `SG=0`. The checkbox stays. Deploying in Change Auditor mode is out of scope for v1, but nothing may foreclose it. **The off case omits `SG` rather than passing `SG=0`**, by explicit decision: the MSI branches on `NOT SG`, which in Windows Installer means "undefined or empty", so `SG=0` is truthy and takes a different path from omission — and `SG=0` has not been tested against a Change Auditor server. |
+| Q2 | What is the valid format of the Org ID — GUID, opaque string, length bounds? | PM / Change Auditor team | **ANSWERED 2026-08-25.** The format follows the mode: a tenant GUID for Identity Defense, a short installation name such as `DEFAULT` for Change Auditor. A value that disagrees with the selected mode is **warned about, never rejected** — either control could be the one that is wrong, and this utility is not in a position to decide the format of an identifier issued by another product. |
 | Q3 | Will Quest code-sign this utility despite its unsupported status? | PM (research in progress) | Build the signing step into the publish pipeline as a no-op placeholder. Treat signing as a release gate. If Quest declines, the README MUST document that AppLocker and EDR may block execution in hardened environments — which is precisely where this tool is most needed. |
 | Q4 | Is a large single-file publish acceptable, or is a folder deployment preferred? | PM | Publish self-contained single-file, untrimmed. Revisit only if size is objected to. |
 | Q5 | Do any target customer jump hosts run Windows Server Core, where WinForms cannot launch? | PM / SE team | The CLI (Phase 4) covers this case. Confirm before deprioritising CLI polish. |
 | Q6 | Product naming: the outline calls this the Identity Defense **Hybrid Audit Agent**, but the MSI is `Quest Change Auditor Agent (x64).msi`. Are these the same binary under different names, and which name should the UI use? | PM | UI refers to "Hybrid Audit Agent"; log and history record the MSI's actual `ProductName`. Flagging because a mismatch between the tool's language and the file the operator picks will cause support questions. |
-| Q7 | Minimum supported DC OS version? Affects whether WinRM-enabled-by-default can be assumed. | PM | Assume Windows Server 2012 R2 and later. |
+| Q7 | Minimum supported DC OS version? Affects whether WinRM-enabled-by-default can be assumed. | PM | **ANSWERED 2026-08-25 by the package itself, not by PM.** The agent MSI carries a `LaunchCondition` reading "The minimum supported version for the agent is Windows Server 2016", so anything older is refused outright regardless of what this utility assumes. The assumption of 2012 R2 was wrong. Validation now reads each target's build number live and reports a domain controller below build 14393 as not ready. The MSI also requires .NET Framework 4.8 and MSXML 6.0, neither of which is checked yet. |
 
 ---
 

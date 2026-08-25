@@ -406,6 +406,7 @@ internal sealed class DeployTab : UserControl
         var state = new DeploymentFormState
         {
             Msi = _msi,
+            CloudMode = _cloudMode.Checked,
             OrgId = _orgId.Text,
             SelectedTargetCount = selected.Count,
             ActivityInFlight = _main.ActivityInFlight,
@@ -418,7 +419,7 @@ internal sealed class DeployTab : UserControl
             : $"{selected.Count} selected — " +
               string.Join(" · ", DeploymentFormState.SummariseBySite(selected));
 
-        _commandPreview.Text = state.CommandPreview(_cloudMode.Checked);
+        _commandPreview.Text = state.CommandPreview();
 
         _start.Enabled = state.CanStart;
         _validate.Enabled = state.CanValidate;
@@ -457,6 +458,7 @@ internal sealed class DeployTab : UserControl
         var state = new DeploymentFormState
         {
             Msi = _msi,
+            CloudMode = _cloudMode.Checked,
             SelectedTargetCount = selected.Count,
             ActivityInFlight = _main.ActivityInFlight,
             AlternateCredentialIncomplete = _alternateIdentity.Checked &&
@@ -492,6 +494,7 @@ internal sealed class DeployTab : UserControl
         var request = ValidationRequest.Create(
             msi: _msi!,
             targets: targets,
+            cloudMode: _cloudMode.Checked,
             operatorAccount: credential?.AccountName ?? OperatorCredential.CurrentWindowsAccountName(),
             logDirectory: AppConfigurationLoader.ValidationLogDirectory(
                 _main.Configuration.LogRootPath, Guid.NewGuid(), DateTimeOffset.UtcNow),
@@ -542,6 +545,7 @@ internal sealed class DeployTab : UserControl
         var state = new DeploymentFormState
         {
             Msi = _msi,
+            CloudMode = _cloudMode.Checked,
             OrgId = _orgId.Text,
             SelectedTargetCount = selected.Count,
             ActivityInFlight = _main.ActivityInFlight,
@@ -559,7 +563,8 @@ internal sealed class DeployTab : UserControl
         // PRD 11: the blocking checklist, before the confirmation dialog — there is no point
         // asking the operator to confirm a run that cannot start.
         var preflight = await new PreflightValidator(_main.MsiInspector, _main.Resolver)
-            .ValidateAsync(_msi!.FilePath, _orgId.Text, targets, logDirectory, CancellationToken.None);
+            .ValidateAsync(_msi!.FilePath, _orgId.Text, targets, logDirectory, CancellationToken.None,
+                cloudMode: _cloudMode.Checked);
 
         if (!preflight.Passed)
         {

@@ -361,13 +361,23 @@ internal sealed class ProgressTab : UserControl
             "Nothing was installed. No deployment history was recorded.",
         };
 
-        if (summary.WouldBeRefusedCount > 0)
+        if (summary.ModeMismatchCount > 0)
         {
             lines.Add(string.Empty);
             lines.Add(
-                $"{summary.WouldBeRefusedCount} domain controller(s) are reachable but already " +
-                "carry a newer agent than this package. msiexec would refuse the install with " +
-                "exit code 1638.");
+                $"{summary.ModeMismatchCount} domain controller(s) have an agent installed for " +
+                "the other product. The installer refuses to move an agent between Identity " +
+                "Defense and Change Auditor, so this deployment would fail on them. The fix is " +
+                "the cloud-mode setting, not the package.");
+        }
+
+        var newerAgents = summary.WouldBeRefusedCount - summary.ModeMismatchCount;
+        if (newerAgents > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add(
+                $"{newerAgents} domain controller(s) are reachable but already carry a newer " +
+                "agent than this package. msiexec would refuse the install with exit code 1638.");
         }
 
         if (summary.WasCancelled)

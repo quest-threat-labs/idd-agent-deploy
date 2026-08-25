@@ -27,6 +27,12 @@ public sealed record DeploymentFormState
     /// <summary>Whatever is currently typed in the Org ID box.</summary>
     public string? OrgId { get; init; }
 
+    /// <summary>
+    /// The cloud-mode checkbox. Decides which product the agent is pointed at, and therefore
+    /// what an Org ID is expected to look like.
+    /// </summary>
+    public bool CloudMode { get; init; } = true;
+
     public int SelectedTargetCount { get; init; }
 
     /// <summary>
@@ -39,7 +45,7 @@ public sealed record DeploymentFormState
     public bool AlternateCredentialIncomplete { get; init; }
 
     // Fully qualified: the OrgId property above shadows the OrgId type in this scope.
-    public OrgIdValidation OrgIdValidation => Core.Deployment.OrgId.Validate(OrgId);
+    public OrgIdValidation OrgIdValidation => Core.Deployment.OrgId.Validate(OrgId, CloudMode);
 
     public bool CanStart => BlockingReason is null;
 
@@ -140,6 +146,10 @@ public sealed record DeploymentFormState
     /// concurrent targets, so validating while deploying would silently turn the R7.1 ceiling
     /// of five into ten against domain controllers.
     /// </remarks>
+    /// <summary>The product this run points the agent at, named as the operator knows it.</summary>
+    public string ModeDescription => ValidationOutcome.Describe(
+        CloudMode ? AgentMode.IdentityDefense : AgentMode.ChangeAuditor);
+
     private string? SharedBlockingReason =>
         ActivityInFlight is { } activity
             ? $"A {activity} is already running. Wait for it to finish before starting another."
@@ -160,6 +170,11 @@ public sealed record DeploymentFormState
             $"Deploy {Msi?.ProductName ?? "this package"} {Msi?.ProductVersion} to " +
             $"{SelectedTargetCount} domain controller{(SelectedTargetCount == 1 ? string.Empty : "s")}?",
             string.Empty,
+
+            // Which product the agent will report to afterwards. Restated because it is set by
+            // a checkbox that is easy to leave at its last value, and because the installer
+            // refuses to move an existing agent from one product to the other.
+            $"Reporting to: {ModeDescription}",
             $"Org ID: {OrgIdValidation.Value}",
             string.Empty,
         };
@@ -200,11 +215,14 @@ public sealed record DeploymentFormState
             $"{(SelectedTargetCount == 1 ? string.Empty : "s")} against " +
             $"{Msi?.ProductName ?? "this package"} {Msi?.ProductVersion}?",
             string.Empty,
+            $"Checked as a deployment reporting to: {ModeDescription}",
+            string.Empty,
             "On each one this will:",
             "  - confirm DNS, SMB, and WinRM answer",
             "  - write a small test file to C:\\Windows\\Temp and read it back",
             "  - open a remoting session and run a command that does nothing",
-            "  - read which Change Auditor agent is installed",
+            "  - read which agent is installed, and which product it reports to",
+            "  - read the Windows version, which the agent requires to be 2016 or later",
             "  - delete the test file",
             string.Empty,
             "Nothing is installed, changed, or restarted. The package is not copied to any " +
@@ -237,7 +255,7 @@ public sealed record DeploymentFormState
     /// see the command before it runs, and a preview that is merely similar would be worse
     /// than none.
     /// </remarks>
-    public string CommandPreview(bool cloudMode)
+    public string CommandPreview()
     {
         if (Msi is null)
         {
@@ -258,7 +276,7 @@ public sealed record DeploymentFormState
             Path.Combine(directory, Msi.FileName),
             Path.Combine(directory, "install.log"),
             orgId.Value!,
-            cloudMode).ToDisplayString();
+            CloudMode).ToDisplayString();
     }
 
     /// <summary>

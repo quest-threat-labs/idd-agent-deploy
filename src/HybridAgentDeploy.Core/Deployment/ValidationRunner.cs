@@ -25,6 +25,19 @@ public sealed class ValidationRequest
     /// </remarks>
     public required MsiPackageInfo Msi { get; init; }
 
+    /// <summary>
+    /// Whether the deployment this is checking would pass <c>SG=1</c>.
+    /// </summary>
+    /// <remarks>
+    /// Needed because the installer refuses an upgrade that changes an agent from one product
+    /// to the other, so "will this deployment work" cannot be answered without knowing which
+    /// product it targets.
+    /// </remarks>
+    public bool CloudMode { get; init; } = true;
+
+    /// <summary>The product the run would configure the agent for.</summary>
+    public AgentMode RequestedMode => CloudMode ? AgentMode.IdentityDefense : AgentMode.ChangeAuditor;
+
     public required IReadOnlyList<DeploymentTarget> Targets { get; init; }
 
     /// <summary>DOMAIN\user. Recorded against the run; never a password (SEC1, PRD 12.3).</summary>
@@ -64,6 +77,7 @@ public sealed class ValidationRequest
         IReadOnlyList<DeploymentTarget> targets,
         string operatorAccount,
         string logDirectory,
+        bool cloudMode = true,
         int maxParallel = DeploymentLimits.MaxConcurrencyCeiling,
         int timeoutMinutes = DeploymentLimits.MinTimeoutMinutes,
         IReadOnlyDictionary<string, int>? activeDcsPerSite = null,
@@ -71,6 +85,7 @@ public sealed class ValidationRequest
         new()
         {
             Msi = msi,
+            CloudMode = cloudMode,
             Targets = targets,
             OperatorAccount = operatorAccount,
             LogDirectory = logDirectory,
@@ -221,6 +236,7 @@ public sealed class ValidationRunner
                         $"{target.Fqdn} was not checked: the run was cancelled before it was " +
                         "reached. Nothing was written to it."),
                 ],
+                RequestedMode = request.RequestedMode,
                 StartedUtc = now,
                 CompletedUtc = now,
             });
@@ -279,8 +295,8 @@ public sealed class ValidationRunner
             try
             {
                 outcome = await validator.ValidateAsync(
-                    target, request.Msi, stagingDirectory, request.PerTargetTimeout, startedUtc,
-                    timeoutSource.Token).ConfigureAwait(false);
+                    target, request.Msi, request.RequestedMode, stagingDirectory,
+                    request.PerTargetTimeout, startedUtc, timeoutSource.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
             {
@@ -297,6 +313,7 @@ public sealed class ValidationRunner
                             "would time out on this host too. Confirm the domain controller is " +
                             "responsive and that WinRM is not blocked by a slow or filtered path."),
                     ],
+                    RequestedMode = request.RequestedMode,
                     ErrorCategory = ErrorCategory.Timeout,
                     StartedUtc = startedUtc,
                     CompletedUtc = _time.GetUtcNow(),

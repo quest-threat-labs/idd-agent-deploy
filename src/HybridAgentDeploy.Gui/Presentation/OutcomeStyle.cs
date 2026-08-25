@@ -87,6 +87,13 @@ public static class OutcomeStyle
             return new OutcomeAppearance("not ready", FailureBack, FailureFore);
         }
 
+        // Outranks the version comparison: an upgrade that crosses products fails regardless
+        // of which version is newer, so "ready - upgrade" would be actively misleading.
+        if (outcome.HasModeMismatch)
+        {
+            return new OutcomeAppearance("wrong mode", WarningBack, WarningFore);
+        }
+
         return outcome.Predicted switch
         {
             PredictedAction.DowngradeBlocked =>

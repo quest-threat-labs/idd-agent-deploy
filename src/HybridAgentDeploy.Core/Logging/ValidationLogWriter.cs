@@ -70,8 +70,9 @@ public sealed class ValidationLogWriter : IAsyncDisposable
         builder.AppendLine();
         builder.AppendLine("NOTHING WAS INSTALLED BY THIS RUN. Validation confirms each domain");
         builder.AppendLine("controller is reachable, that the running account can write to it and");
-        builder.AppendLine("start a process on it, and what agent it already has. msiexec was not");
-        builder.AppendLine("run and the package was not copied to any target.");
+        builder.AppendLine("start a process on it, that its Windows version is supported, and");
+        builder.AppendLine("what agent it already has and which product that agent reports to.");
+        builder.AppendLine("msiexec was not run and the package was not copied to any target.");
         builder.AppendLine();
         builder.AppendLine($"Run GUID          : {runGuid:D}");
         builder.AppendLine($"Started           : {UtcTimestamp.Format(startedUtc)}");
@@ -84,6 +85,14 @@ public sealed class ValidationLogWriter : IAsyncDisposable
         builder.AppendLine($"  Product name    : {request.Msi.ProductName ?? "(not present)"}");
         builder.AppendLine($"  Product version : {request.Msi.ProductVersion}");
         builder.AppendLine($"  SHA-256         : {request.Msi.Sha256}");
+        builder.AppendLine();
+        builder.AppendLine(
+            $"Deployment mode   : {ValidationOutcome.Describe(request.RequestedMode)}" +
+            $" ({(request.CloudMode ? "SG=1" : "SG omitted")})");
+        builder.AppendLine(
+            "                    The installer refuses an upgrade that moves an agent between");
+        builder.AppendLine(
+            "                    these two products, so each target's current mode is reported.");
         builder.AppendLine();
         builder.AppendLine($"Probe directory   : {probeDirectory}");
         builder.AppendLine(
@@ -182,11 +191,20 @@ public sealed class ValidationLogWriter : IAsyncDisposable
 
         if (summary.WouldBeRefusedCount > 0)
         {
-            builder.AppendLine($"Package refused   : {summary.WouldBeRefusedCount}");
+            builder.AppendLine($"Would be refused  : {summary.WouldBeRefusedCount}");
             builder.AppendLine(
-                "                    These domain controllers are reachable and writable, but");
+                "                    Reachable and writable, but the installer would refuse this");
             builder.AppendLine(
-                "                    already carry a newer agent. msiexec would return 1638.");
+                "                    deployment - a newer agent is present, or the agent is");
+            builder.AppendLine(
+                "                    installed for the other product.");
+        }
+
+        if (summary.ModeMismatchCount > 0)
+        {
+            builder.AppendLine($"Mode mismatch     : {summary.ModeMismatchCount}");
+            builder.AppendLine(
+                "                    The fix is the cloud-mode setting, not the package.");
         }
 
         if (summary.WasCancelled)
@@ -220,6 +238,7 @@ public sealed class ValidationLogWriter : IAsyncDisposable
 
         builder.AppendLine(
             "fqdn,site,verdict,predicted_action,installed_version,installed_product_code," +
+            "installed_mode,requested_mode,mode_mismatch,os_build,os_name," +
             "error_category,started_utc,completed_utc,duration_seconds,failed_checks,detail");
 
         foreach (var outcome in summary.Outcomes.OrderBy(o => o.Target.Fqdn, StringComparer.OrdinalIgnoreCase))
@@ -232,6 +251,11 @@ public sealed class ValidationLogWriter : IAsyncDisposable
                 Csv(outcome.Predicted.ToString()),
                 Csv(outcome.InstalledAgent?.Version),
                 Csv(outcome.InstalledAgent?.ProductCode),
+                Csv(outcome.InstalledAgent?.Mode?.ToString()),
+                Csv(outcome.RequestedMode.ToString()),
+                Csv(outcome.HasModeMismatch ? "yes" : "no"),
+                Csv(outcome.OperatingSystem?.BuildNumber.ToString(CultureInfo.InvariantCulture)),
+                Csv(outcome.OperatingSystem?.ProductName),
                 Csv(outcome.ErrorCategory?.ToString()),
                 Csv(UtcTimestamp.Format(outcome.StartedUtc)),
                 Csv(UtcTimestamp.Format(outcome.CompletedUtc)),

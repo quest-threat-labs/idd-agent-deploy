@@ -44,7 +44,7 @@ public sealed class ValidationTests
     public async Task Validation_never_runs_msiexec()
     {
         var transport = new SimulatedTransport();
-        transport.ConfigureDefault(h => h.StandardOutput = "none");
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(agent: "none", mode: "none"));
 
         var summary = await RunAsync(transport, [Target("dc01.corp.local"), Target("dc02.corp.local")]);
 
@@ -71,7 +71,7 @@ public sealed class ValidationTests
     public async Task The_probe_is_cleaned_up_from_every_target_that_was_written_to()
     {
         var transport = new SimulatedTransport();
-        transport.ConfigureDefault(h => h.StandardOutput = "none");
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(agent: "none", mode: "none"));
         transport.ConfigureHost("dc02.corp.local", h =>
             h.ExecutionLaunchFailure = new SimulatedFailure(
                 ErrorCategory.Authentication, "Access is denied opening a session on dc02."));
@@ -94,7 +94,7 @@ public sealed class ValidationTests
     public async Task An_unreachable_target_is_not_staged_to()
     {
         var transport = new SimulatedTransport();
-        transport.ConfigureDefault(h => h.StandardOutput = "none");
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(agent: "none", mode: "none"));
         transport.ConfigureHost("dc02.corp.local", h =>
             h.PreflightFailure = new SimulatedFailure(
                 ErrorCategory.Connectivity,
@@ -120,7 +120,7 @@ public sealed class ValidationTests
     public async Task A_target_that_cannot_be_written_to_is_reported_as_not_ready()
     {
         var transport = new SimulatedTransport();
-        transport.ConfigureDefault(h => h.StandardOutput = "none");
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(agent: "none", mode: "none"));
         transport.ConfigureHost("dc02.corp.local", h =>
             h.StagingFailure = new SimulatedFailure(
                 ErrorCategory.Staging,
@@ -153,7 +153,7 @@ public sealed class ValidationTests
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h =>
         {
-            h.StandardOutput = "none";
+            h.StandardOutput = TargetState(agent: "none", mode: "none");
 
             // SimulatedTransport reports this as the staged copy's hash; the probe's real
             // content is random, so it can never match.
@@ -175,7 +175,7 @@ public sealed class ValidationTests
     public async Task A_host_with_no_agent_is_predicted_as_a_fresh_install()
     {
         var transport = new SimulatedTransport();
-        transport.ConfigureDefault(h => h.StandardOutput = "none");
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(agent: "none", mode: "none"));
 
         var summary = await RunAsync(transport, [Target("dc01.corp.local")]);
 
@@ -195,7 +195,7 @@ public sealed class ValidationTests
     {
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h =>
-            h.StandardOutput = "Quest Change Auditor Agent (x64)|7.6.0.10|{1234}");
+            h.StandardOutput = TargetState(version: "7.6.0.10", productCode: "{1234}"));
 
         var summary = await RunAsync(transport, [Target("dc01.corp.local")]);
 
@@ -221,33 +221,239 @@ public sealed class ValidationTests
     }
 
     [Theory]
-    [InlineData("none", null)]
-    [InlineData("NONE", null)]
+    [InlineData("AGENT|none", null)]
+    [InlineData("AGENT|NONE", null)]
     [InlineData("", null)]
     [InlineData("   ", null)]
-    [InlineData("Quest Change Auditor Agent (x64)|7.5.0.100|{abc}", "7.5.0.100")]
-    [InlineData("Quest Change Auditor Agent (x64)|7.5.0.100", null)]
+    [InlineData("AGENT|Quest Change Auditor Agent (x64)|7.5.0.100|{abc}", "7.5.0.100")]
+    [InlineData("AGENT|Quest Change Auditor Agent (x64)|7.5.0.100", null)]
     public void The_installed_agent_query_output_is_parsed_or_treated_as_absent(
         string output,
         string? expectedVersion)
     {
-        var parsed = TargetValidator.ParseInstalledAgent(output);
+        var parsed = TargetValidator.ParseTargetState(output);
 
-        Assert.Equal(expectedVersion, parsed?.Version);
+        Assert.Equal(expectedVersion, parsed.Agent?.Version);
     }
 
     /// <summary>
-    /// A remote PowerShell session prints more than the last expression when a profile or a
-    /// module has something to say. Only the final line is the answer.
+    /// A remote PowerShell session prints more than its last expression when a profile or a
+    /// module has something to say, and the lines can arrive in any order.
+    /// </summary>
+    /// <remarks>
+    /// Fields are looked up by label rather than by position for exactly this reason. Reading
+    /// the third line as "the version" would have turned a warning banner into a 7.6 agent
+    /// looking like a 7.7 one.
+    /// </remarks>
+    [Fact]
+    public void Noise_around_the_query_output_is_ignored_and_labels_drive_the_parse()
+    {
+        var parsed = TargetValidator.ParseTargetState(
+            "WARNING: something chatty\r\n" +
+            "OS|26100|Windows Server 2025 Standard\r\n" +
+            "AGENT|Quest Change Auditor 7.7.0 Agent|7.7.34005.0|{abc}\r\n" +
+            "MODE|1\r\n");
+
+        Assert.Equal("7.7.34005.0", parsed.Agent!.Version);
+        Assert.Equal("{abc}", parsed.Agent.ProductCode);
+        Assert.Equal(AgentMode.IdentityDefense, parsed.Agent.Mode);
+        Assert.Equal(26100, parsed.OperatingSystem!.BuildNumber);
+        Assert.Equal("Windows Server 2025 Standard", parsed.OperatingSystem.ProductName);
+    }
+
+    /// <summary>
+    /// The connection mode. Anything other than 0 or 1 is reported as unrecognised rather
+    /// than folded into a mode — a wrong answer here tells the operator a deployment is safe
+    /// when the installer is about to refuse it.
+    /// </summary>
+    [Theory]
+    [InlineData("MODE|0", AgentMode.ChangeAuditor)]
+    [InlineData("MODE|1", AgentMode.IdentityDefense)]
+    [InlineData("MODE|2", AgentMode.Unrecognised)]
+    [InlineData("MODE|yes", AgentMode.Unrecognised)]
+    [InlineData("MODE|none", null)]
+    [InlineData("", null)]
+    public void The_connection_mode_is_parsed_or_reported_as_unknown(string modeLine, AgentMode? expected)
+    {
+        var parsed = TargetValidator.ParseTargetState(
+            "AGENT|Quest Change Auditor Agent (x64)|7.5.0.100|{abc}\r\n" + modeLine);
+
+        Assert.Equal(expected, parsed.Agent!.Mode);
+    }
+
+    [Theory]
+    [InlineData("OS|26100|Windows Server 2025 Standard", 26100, true)]
+    [InlineData("OS|14393|Windows Server 2016 Standard", 14393, true)]
+    [InlineData("OS|9600|Windows Server 2012 R2 Standard", 9600, false)]
+    public void The_operating_system_is_parsed_and_checked_against_the_agent_minimum(
+        string line,
+        int expectedBuild,
+        bool supported)
+    {
+        var os = TargetValidator.ParseTargetState(line).OperatingSystem;
+
+        Assert.Equal(expectedBuild, os!.BuildNumber);
+        Assert.Equal(supported, os.IsSupported);
+    }
+
+    [Theory]
+    [InlineData("OS|not-a-number|Windows")]
+    [InlineData("")]
+    public void An_unreadable_operating_system_is_reported_as_unknown(string line)
+    {
+        Assert.Null(TargetValidator.ParseTargetState(line).OperatingSystem);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Mode. The installer refuses to move an agent between Identity Defense and Change
+    // Auditor, and detects it itself through UPGRADE_SG_MISMATCH.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The case a version comparison alone gets wrong. An on-premises agent being upgraded by
+    /// a cloud-mode run is a newer version arriving on the target, so the version check says
+    /// "upgrade" and the deployment then fails.
     /// </summary>
     [Fact]
-    public void Leading_noise_in_the_query_output_is_ignored()
+    public async Task A_cloud_run_against_an_on_premises_agent_is_flagged_as_a_mode_change()
     {
-        var parsed = TargetValidator.ParseInstalledAgent(
-            "WARNING: something chatty\r\nQuest Change Auditor Agent (x64)|7.5.0.100|{abc}\r\n");
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(version: "7.4.0.20", mode: "0"));
 
-        Assert.Equal("7.5.0.100", parsed!.Version);
-        Assert.Equal("{abc}", parsed.ProductCode);
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: true);
+
+        var outcome = summary.Outcomes.Single();
+
+        // Every check passes: nothing is wrong with the domain controller.
+        Assert.True(outcome.Passed);
+        Assert.True(outcome.HasModeMismatch);
+        Assert.Equal(1, summary.ModeMismatchCount);
+        Assert.Equal(1, summary.WouldBeRefusedCount);
+
+        // The version comparison on its own would have said "upgrade", which is why the mode
+        // has to outrank it in the headline.
+        Assert.Equal(PredictedAction.Upgrade, outcome.Predicted);
+        Assert.Contains("refuses a mode change", outcome.Summary, StringComparison.Ordinal);
+        Assert.Contains("Change Auditor", outcome.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_on_premises_run_against_a_cloud_agent_is_flagged_as_a_mode_change()
+    {
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(version: "7.4.0.20", mode: "1"));
+
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: false);
+
+        Assert.True(summary.Outcomes.Single().HasModeMismatch);
+        Assert.Equal(1, summary.ModeMismatchCount);
+    }
+
+    [Theory]
+    [InlineData("1", true)]
+    [InlineData("0", false)]
+    public async Task A_matching_mode_is_not_a_mismatch(string installedMode, bool cloudMode)
+    {
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(version: "7.4.0.20", mode: installedMode));
+
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: cloudMode);
+
+        var outcome = summary.Outcomes.Single();
+        Assert.False(outcome.HasModeMismatch);
+        Assert.Equal(0, summary.ModeMismatchCount);
+        Assert.Contains("ready - upgrade", outcome.Summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A fresh install cannot be a mode change: there is no installed mode to move away from.
+    /// </summary>
+    [Fact]
+    public async Task A_host_with_no_agent_is_never_a_mode_mismatch()
+    {
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(agent: "none", mode: "none"));
+
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")], cloudMode: false);
+
+        Assert.False(summary.Outcomes.Single().HasModeMismatch);
+    }
+
+    /// <summary>
+    /// An agent whose mode cannot be read is not assumed to match. Assuming it does is the
+    /// assumption that produces a failed deployment.
+    /// </summary>
+    [Fact]
+    public async Task An_unreadable_mode_is_reported_rather_than_assumed_to_match()
+    {
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(version: "7.4.0.20", mode: "none"));
+
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")]);
+
+        var outcome = summary.Outcomes.Single();
+        Assert.False(outcome.HasModeMismatch);
+        Assert.Contains(
+            outcome.Checks,
+            c => c.Name == "Connection mode" && c.Detail.Contains("could not be read", StringComparison.Ordinal));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Operating system. The MSI refuses anything below Server 2016 through a launch condition.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Reported as a failure rather than as a refused package, because it is a property of the
+    /// host: no version of this agent can be installed on a domain controller this old.
+    /// </summary>
+    [Fact]
+    public async Task A_domain_controller_below_server_2016_is_not_ready()
+    {
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h =>
+            h.StandardOutput = TargetState(agent: "none", mode: "none", build: "9600",
+                osName: "Windows Server 2012 R2 Standard"));
+
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")]);
+
+        var outcome = summary.Outcomes.Single();
+        Assert.False(outcome.Passed);
+        Assert.Equal(1, summary.ProblemCount);
+        Assert.Contains(outcome.Checks, c => c.Name == "Supported operating system" && !c.Passed);
+        Assert.Contains("Windows Server 2016 or later", outcome.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_supported_domain_controller_reports_its_operating_system()
+    {
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h => h.StandardOutput = TargetState(agent: "none", mode: "none"));
+
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")]);
+
+        var outcome = summary.Outcomes.Single();
+        Assert.True(outcome.Passed);
+        Assert.Equal(26100, outcome.OperatingSystem!.BuildNumber);
+        Assert.Contains(outcome.Checks, c => c.Name == "Supported operating system" && c.Passed);
+    }
+
+    /// <summary>
+    /// An unreadable OS does not fail the target. The installer checks it too, and refusing a
+    /// domain controller because one registry read came back empty would be a worse answer
+    /// than letting the installer's own launch condition speak.
+    /// </summary>
+    [Fact]
+    public async Task An_unreadable_operating_system_does_not_fail_the_target()
+    {
+        var transport = new SimulatedTransport();
+        transport.ConfigureDefault(h =>
+            h.StandardOutput = "AGENT|none\r\nMODE|none");
+
+        var summary = await RunAsync(transport, [Target("dc01.corp.local")]);
+
+        var outcome = summary.Outcomes.Single();
+        Assert.True(outcome.Passed);
+        Assert.Null(outcome.OperatingSystem);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -262,7 +468,7 @@ public sealed class ValidationTests
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h =>
         {
-            h.StandardOutput = "none";
+            h.StandardOutput = TargetState(agent: "none", mode: "none");
             h.PreflightDelay = TimeSpan.FromMilliseconds(30);
             h.ExecutionDelay = TimeSpan.FromMilliseconds(30);
         });
@@ -293,7 +499,7 @@ public sealed class ValidationTests
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h =>
         {
-            h.StandardOutput = "none";
+            h.StandardOutput = TargetState(agent: "none", mode: "none");
             h.PreflightDelay = TimeSpan.FromMilliseconds(40);
         });
 
@@ -341,7 +547,7 @@ public sealed class ValidationTests
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h =>
         {
-            h.StandardOutput = "none";
+            h.StandardOutput = TargetState(agent: "none", mode: "none");
             h.PreflightDelay = TimeSpan.FromMilliseconds(60);
         });
 
@@ -390,7 +596,7 @@ public sealed class ValidationTests
     {
         var transport = new SimulatedTransport();
         transport.ConfigureDefault(h =>
-            h.StandardOutput = "Quest Change Auditor Agent (x64)|7.4.0.20|{abc}");
+            h.StandardOutput = TargetState(version: "7.4.0.20"));
 
         var directory = CreateTempDirectory();
         try
@@ -461,12 +667,26 @@ public sealed class ValidationTests
 
     // ---------------------------------------------------------------------------------------
 
+    /// <summary>Builds the output the query script produces on a target.</summary>
+    private static string TargetState(
+        string agent = "Quest Change Auditor Agent (x64)",
+        string version = "7.4.0.20",
+        string productCode = "{abc}",
+        string mode = "1",
+        string build = "26100",
+        string osName = "Windows Server 2025 Standard") =>
+        (agent.Equals("none", StringComparison.OrdinalIgnoreCase)
+            ? "AGENT|none"
+            : $"AGENT|{agent}|{version}|{productCode}") +
+        $"\r\nMODE|{mode}\r\nOS|{build}|{osName}";
+
     private static async Task<ValidationRunSummary> RunAsync(
         SimulatedTransport transport,
         IReadOnlyList<DeploymentTarget> targets,
         int maxParallel = 5,
         IReadOnlyDictionary<string, int>? activeDcsPerSite = null,
-        string? logDirectory = null)
+        string? logDirectory = null,
+        bool cloudMode = true)
     {
         var directory = logDirectory ?? CreateTempDirectory();
         try
@@ -476,6 +696,7 @@ public sealed class ValidationTests
                 targets,
                 @"CORP\admin",
                 directory,
+                cloudMode: cloudMode,
                 maxParallel: maxParallel,
                 activeDcsPerSite: activeDcsPerSite ??
                     new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["HQ"] = 40 });

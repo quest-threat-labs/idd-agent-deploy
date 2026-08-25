@@ -36,9 +36,7 @@ internal sealed class TagsTab : UserControl
         var buttons = Ui.Bar(
             NewButton("Create tag...", CreateAsync),
             NewButton("Rename...", RenameAsync),
-            NewButton("Delete", DeleteAsync),
-            NewButton("Apply to selection", ApplyToSelectionAsync),
-            NewButton("Remove from selection", RemoveFromSelectionAsync));
+            NewButton("Delete", DeleteAsync));
 
         Controls.Add(_tags);
         Controls.Add(_selectionSummary);
@@ -81,10 +79,11 @@ internal sealed class TagsTab : UserControl
         _tags.EndUpdate();
 
         _selectionSummary.Text =
-            $"{_main.Selection.Count} domain controller(s) selected on the Inventory tab." +
-            Environment.NewLine +
-            "Applying or removing a tag affects that selection. Deleting a tag removes the " +
-            "association only — no domain controller or deployment history is ever deleted.";
+            "Tags defined in this inventory. Creating, renaming and deleting them happens here; " +
+            "applying them to domain controllers happens on the Inventory tab, with \"Edit " +
+            "tags...\"." + Environment.NewLine +
+            "Deleting a tag removes the association only — no domain controller or deployment " +
+            "history is ever deleted.";
 
         UpdateSummaryWidth();
     }
@@ -171,43 +170,6 @@ internal sealed class TagsTab : UserControl
 
         await _main.Tags.DeleteAsync(tag.Id, CancellationToken.None);
         await _main.RefreshInventoryAsync();
-    }
-
-    private async Task ApplyToSelectionAsync(Button _) => await ChangeSelectionAsync(apply: true);
-
-    private async Task RemoveFromSelectionAsync(Button _) => await ChangeSelectionAsync(apply: false);
-
-    private async Task ChangeSelectionAsync(bool apply)
-    {
-        if (SelectedTag() is not { } tag)
-        {
-            return;
-        }
-
-        if (_main.Selection.Count == 0)
-        {
-            MessageBox.Show(
-                this,
-                "No domain controllers are selected. Tick them on the Inventory tab first.",
-                "Nothing selected",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-            return;
-        }
-
-        var ids = _main.Selection.SelectedIds.ToList();
-
-        if (apply)
-        {
-            await _main.Tags.ApplyTagAsync(tag.Id, ids, CancellationToken.None);
-        }
-        else
-        {
-            await _main.Tags.RemoveTagAsync(tag.Id, ids, CancellationToken.None);
-        }
-
-        await _main.RefreshInventoryAsync();
-        SelectByName(tag.Name);
     }
 
     private void SelectByName(string name)

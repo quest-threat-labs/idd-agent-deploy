@@ -34,12 +34,20 @@ internal sealed class InventoryTab : UserControl
     private readonly ComboBox _outcomeFilter = new() { Width = 160, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _status = new() { AutoSize = true, Padding = new Padding(8, 8, 0, 0) };
 
+    private Button _editTags = null!;
     private IReadOnlyList<InventoryRow> _visible = [];
     private bool _suppressCellEvents;
 
     public InventoryTab(MainForm main)
     {
         _main = main;
+
+        // Created before anything below can render the grid. Setting the outcome filter's
+        // initial index fires SelectedIndexChanged, which reaches UpdateStatus and reads this
+        // button's enabled state — creating it later in BuildActionBar left it null at that
+        // moment, and the application failed to start at all.
+        _editTags = NewButton("Edit tags...", OnEditTagsAsync);
+        _editTags.Enabled = false;
 
         BuildColumns();
 
@@ -72,10 +80,60 @@ internal sealed class InventoryTab : UserControl
         return Ui.Bar(
             NewButton("Enumerate from Active Directory...", OnEnumerateAsync),
             NewButton("Tag from file...", OnTagFromFileAsync),
-            NewButton("Manage tags", _ => { _main.ShowTagsTab(); return Task.CompletedTask; }),
+            _editTags,
             NewButton("Select all", _ => { SelectVisible(true); return Task.CompletedTask; }),
             NewButton("Select none", _ => { SelectVisible(false); return Task.CompletedTask; }),
             _status);
+    }
+
+    /// <summary>
+    /// Adds and removes tags across the ticked domain controllers (PRD 8.1).
+    /// </summary>
+    /// <remarks>
+    /// Acts on the ticked selection — the same one the Deploy tab uses — so the application has
+    /// a single answer to "which domain controllers am I working with", and a selection built
+    /// across several filters is not lost by changing one.
+    /// </remarks>
+    private async Task OnEditTagsAsync(Button button)
+    {
+        var selected = _main.Inventory.Where(r => _main.Selection.IsSelected(r.DcId)).ToList();
+
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        var edits = TagEditDialog.Show(
+            this,
+            Presentation.TagList.Build(_main.AllTags, _main.Inventory),
+            selected,
+            _main.Selection.HiddenSelectedCount(_visible));
+
+        if (edits is null)
+        {
+            return;
+        }
+
+        using var busy = new BusyScope(this, button, "Applying...");
+
+        var dcIds = selected.Select(r => r.DcId).ToList();
+
+        foreach (var name in edits.Add)
+        {
+            var tag = await _main.Tags.GetOrCreateAsync(name, null, CancellationToken.None);
+            await _main.Tags.ApplyTagAsync(tag.Id, dcIds, CancellationToken.None);
+        }
+
+        foreach (var name in edits.Remove)
+        {
+            // A tag being removed necessarily exists; guard anyway rather than assume.
+            if (await _main.Tags.GetByNameAsync(name, CancellationToken.None) is { } tag)
+            {
+                await _main.Tags.RemoveTagAsync(tag.Id, dcIds, CancellationToken.None);
+            }
+        }
+
+        await _main.RefreshInventoryAsync();
     }
 
     private Control BuildFilterBar()
@@ -213,6 +271,9 @@ internal sealed class InventoryTab : UserControl
         _status.Text =
             $"{_visible.Count} of {_main.Inventory.Count} shown · {_main.Selection.Count} selected" +
             (hidden > 0 ? $" ({hidden} hidden by the current filter)" : string.Empty);
+
+        // Editing tags needs domain controllers to edit them on.
+        _editTags.Enabled = _main.Selection.Count > 0;
     }
 
     private void OnCellValueChanged(object? sender, DataGridViewCellEventArgs e)

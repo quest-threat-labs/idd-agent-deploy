@@ -169,16 +169,6 @@ internal sealed class MainForm : Form
     public HistoryTab History => _historyTab;
 
     /// <summary>
-    /// Switches to the Tags tab, for the Inventory tab's "Manage tags" button.
-    /// </summary>
-    /// <remarks>
-    /// Selected by page, not by index. This was a hard-coded index 1, which reordering the tabs
-    /// silently turned into the Deploy screen — a change that would have looked like it worked,
-    /// because a tab does switch.
-    /// </remarks>
-    public void ShowTagsTab() => _tabs.SelectedTab = _tagsPage;
-
-    /// <summary>
     /// Sizes the window once the form exists, from the space actually available.
     /// </summary>
     /// <remarks>

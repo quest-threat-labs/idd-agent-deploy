@@ -152,16 +152,65 @@ Copy-Item (Join-Path $repo 'docs\hybridagentdeploy.json.sample') $out -Force
 if ($SignToolPath -and $CertificateThumbprint) {
     if (-not (Test-Path $SignToolPath)) { throw "signtool not found at $SignToolPath" }
 
-    # Every executable and managed assembly, not just the two entry points: AppLocker
-    # publisher rules and some EDR products evaluate what gets loaded, not only what gets
-    # launched.
-    $targets = Get-ChildItem $out -Recurse -Include *.exe, *.dll | Select-Object -Expand FullName
-    Write-Host "Signing $($targets.Count) file(s) with certificate $CertificateThumbprint ..."
+    # Only what is not already signed.
+    #
+    # 272 of the 285 binaries in this bundle already carry valid Microsoft or .NET Foundation
+    # signatures. signtool REPLACES an existing signature unless told to append, so signing
+    # everything would strip Microsoft's attestation off 234 .NET runtime files and put ours
+    # there instead - claiming authorship of code we did not write, and discarding the
+    # stronger signature in the process.
+    #
+    # What is left is thirteen files: our five, and eight unsigned third-party libraries that
+    # ship unsigned from NuGet (SQLitePCLRaw, e_sqlite3, the JsonSchema.Net family, Markdig).
+    # Those do need our signature, because AppLocker publisher rules and some EDR products
+    # evaluate what gets loaded and not only what gets launched - an unsigned DLL loaded by a
+    # signed executable is exactly the case a publisher rule is written to catch.
+    $targets = Get-ChildItem $out -Recurse -Include *.exe, *.dll |
+        Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -eq 'NotSigned' } |
+        Select-Object -Expand FullName
 
-    & $SignToolPath sign /fd SHA256 /td SHA256 /tr $TimestampUrl /sha1 $CertificateThumbprint @targets
+    Write-Host "Signing $($targets.Count) unsigned file(s) with certificate $CertificateThumbprint ..."
+    Write-Host "  (leaving Microsoft-signed assemblies alone)"
+
+    # Timestamping is what keeps a signature valid after the certificate expires. Without it,
+    # every copy of this tool in the field stops validating on the certificate's expiry date -
+    # which for a utility that lives on a share for years is a scheduled outage.
+    #
+    # Allowed to be empty for an offline signing machine or a pipeline test, but never
+    # quietly.
+    $signArgs = @('sign', '/fd', 'SHA256')
+
+    if ([string]::IsNullOrWhiteSpace($TimestampUrl)) {
+        Write-Warning @'
+SIGNING WITHOUT A TIMESTAMP.
+
+The signature will stop validating the day the certificate expires, on every copy already
+distributed. Only do this for a pipeline test or where no timestamp authority is reachable.
+'@
+    }
+    else {
+        $signArgs += @('/td', 'SHA256', '/tr', $TimestampUrl)
+    }
+
+    $signArgs += @('/sha1', $CertificateThumbprint)
+
+    & $SignToolPath @signArgs @targets
     if ($LASTEXITCODE -ne 0) { throw 'signing failed' }
 
-    Write-Host 'Signed.' -ForegroundColor Green
+    # Verify rather than trust the exit code. /pa uses the default Authenticode policy, which
+    # is what Windows itself applies when deciding whether to run the file.
+    & $SignToolPath verify /pa /all @targets
+    if ($LASTEXITCODE -ne 0) { throw 'signature verification failed after signing' }
+
+    $unsigned = Get-ChildItem $out -Recurse -Include *.exe, *.dll |
+        Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne 'Valid' }
+
+    if ($unsigned) {
+        throw ("These files still do not carry a valid signature: {0}" -f
+               (($unsigned | Select-Object -Expand Name) -join ', '))
+    }
+
+    Write-Host 'Signed and verified.' -ForegroundColor Green
 }
 else {
     Write-Warning @'

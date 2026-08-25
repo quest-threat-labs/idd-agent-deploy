@@ -85,6 +85,31 @@ internal static class Ui
     }
 
     /// <summary>
+    /// Sizes a read-only text box to hold a known number of lines of a known widest line,
+    /// measured in the font it is actually rendering with.
+    /// </summary>
+    /// <remarks>
+    /// Hard-coded pixel dimensions are wrong for the same reason hard-coded button widths were:
+    /// the operator's display scaling and font settings decide how much room text needs, and
+    /// this code cannot know them. A box sized by guesswork clipped the SHA-256 of the selected
+    /// package — the one line an operator is asked to check before an installer runs on a
+    /// domain controller.
+    /// </remarks>
+    public static void SizeToContent(TextBox box, int lines, string widestLine)
+    {
+        ArgumentNullException.ThrowIfNull(box);
+
+        var line = TextRenderer.MeasureText(widestLine, box.Font);
+
+        // The measured line box, not Font.Height. Font.Height reported 23 pixels where the
+        // control actually advanced 25 per line, which was enough to clip the last line — the
+        // SHA-256 — clean in half. Measuring the same way the text is drawn avoids guessing at
+        // the difference.
+        box.Height = (line.Height * lines) + 14;
+        box.Width = line.Width + 24;
+    }
+
+    /// <summary>
     /// A label that derives its font from whatever its container is using.
     /// </summary>
     /// <remarks>

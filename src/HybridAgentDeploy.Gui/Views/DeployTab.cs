@@ -15,15 +15,48 @@ internal sealed class DeployTab : UserControl
 {
     private readonly MainForm _main;
 
-    private readonly TextBox _msiPath = new() { Width = 520, ReadOnly = true };
+    /// <summary>
+    /// A representative path, used to size the package path box.
+    /// </summary>
+    /// <remarks>
+    /// A UNC path to a package on a share, which is where these tend to live — NFR4 expects the
+    /// tool itself to be run from one. A path the operator cannot read in full is a path they
+    /// cannot check before it is installed on a domain controller.
+    /// </remarks>
+    private const string RepresentativePath =
+        @"\\fileserver.corp.local\software$\quest\agents\Quest Change Auditor Agent (x64).msi";
+
+    /// <summary>
+    /// The widest line the details box will ever hold: the SHA-256, 64 hex characters after
+    /// its padded label.
+    /// </summary>
+    private const string WidestDetailLine =
+        "Product version : 0000000000000000000000000000000000000000000000000000000000000000";
+
+    /// <summary>Lines shown in the details box; see the text built in BrowseForMsiAsync.</summary>
+    private const int DetailLineCount = 6;
+
+    private readonly TextBox _msiPath = new() { ReadOnly = true };
+
+    /// <summary>
+    /// The selected package's identity (PRD 8.3).
+    /// </summary>
+    /// <remarks>
+    /// Fixed-width, because the lines are written with padded labels so their colons line up —
+    /// which silently did nothing while this used the proportional default font. Sized to show
+    /// all six lines at once with no scrollbar: the operator is meant to read the version and
+    /// the hash before deploying, and a box that needs scrolling to reveal half its content
+    /// invites them not to. Still a text box rather than a label so the hash can be selected
+    /// and copied.
+    /// </remarks>
     private readonly TextBox _msiDetails = new()
     {
         Multiline = true,
         ReadOnly = true,
-        Width = 700,
-        Height = 92,
-        ScrollBars = ScrollBars.Vertical,
+        ScrollBars = ScrollBars.None,
+        WordWrap = false,
         BackColor = SystemColors.Control,
+        Font = Ui.Monospace(9.5f),
     };
 
     private readonly TextBox _orgId = new() { Width = 380 };
@@ -55,12 +88,21 @@ internal sealed class DeployTab : UserControl
     private readonly TextBox _userName = new() { Width = 200, Enabled = false, PlaceholderText = @"DOMAIN\user" };
     private readonly TextBox _password = new() { Width = 160, Enabled = false, UseSystemPasswordChar = true };
 
+    /// <summary>
+    /// Lines the command preview shows before it needs to scroll.
+    /// </summary>
+    /// <remarks>
+    /// The real command runs to roughly two hundred characters once a staging path and an Org
+    /// ID are in it, so four lines covers it with the box wrapping rather than scrolling. This
+    /// is the text PRD 8.3 asks the operator to check before anything runs on a domain
+    /// controller, so it should be readable in one go.
+    /// </remarks>
+    private const int CommandPreviewLines = 4;
+
     private readonly TextBox _commandPreview = new()
     {
         Multiline = true,
         ReadOnly = true,
-        Width = 900,
-        Height = 70,
         ScrollBars = ScrollBars.Vertical,
         BackColor = SystemColors.Control,
         Font = Ui.Monospace(9.5f),
@@ -96,6 +138,14 @@ internal sealed class DeployTab : UserControl
 
         _start.Click += async (_, _) => await StartAsync();
 
+        // Sized from the fonts these controls actually render with, not from pixel counts
+        // guessed here. See Ui.SizeToContent.
+        Ui.SizeToContent(_msiDetails, DetailLineCount, WidestDetailLine);
+        Ui.SizeToContent(_commandPreview, CommandPreviewLines, WidestDetailLine);
+
+        _msiPath.Width = TextRenderer.MeasureText(RepresentativePath, _msiPath.Font).Width + 24;
+        _commandPreview.Width = Math.Max(_commandPreview.Width, _msiDetails.Width);
+
         Controls.Add(BuildLayout());
         RefreshSelectionSummary();
     }
@@ -114,7 +164,7 @@ internal sealed class DeployTab : UserControl
         };
 
         layout.Controls.Add(Ui.Heading("Installer package"));
-        layout.Controls.Add(Ui.Row(_msiPath, browse));
+        layout.Controls.Add(PackageRow(browse));
         layout.Controls.Add(_msiDetails);
 
         layout.Controls.Add(Ui.Heading("Org ID"));
@@ -159,6 +209,38 @@ internal sealed class DeployTab : UserControl
         host.Controls.Add(actions);
 
         return host;
+    }
+
+    /// <summary>
+    /// The package path beside its Browse button, with the path centred against it.
+    /// </summary>
+    /// <remarks>
+    /// A table rather than a flow panel. The button is taller than the text box, and a flow
+    /// panel top-aligns its children, which left the path riding against the button's top
+    /// edge. Anchoring the box left and right — but neither top nor bottom — makes the table
+    /// stretch it across the column and centre it vertically in the row.
+    /// </remarks>
+    private Control PackageRow(Button browse)
+    {
+        var row = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0),
+        };
+
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, _msiPath.Width));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        _msiPath.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        _msiPath.Margin = new Padding(0, 3, 8, 3);
+
+        row.Controls.Add(_msiPath, 0, 0);
+        row.Controls.Add(browse, 1, 0);
+
+        return row;
     }
 
     private void OnIdentityModeChanged()

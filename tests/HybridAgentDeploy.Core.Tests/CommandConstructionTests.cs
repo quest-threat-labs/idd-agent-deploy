@@ -40,9 +40,15 @@ public sealed class CommandConstructionTests
     }
 
     /// <summary>
-    /// PRD-OPEN-Q: Q1 — until PM confirms whether cloud mode is the only supported mode, the
-    /// switch must genuinely disappear rather than being emitted as SG=0.
+    /// PRD Q1, answered: the agent installs in two modes and the switch stays. Cloud mode off
+    /// must make <c>SG</c> genuinely disappear rather than emit <c>SG=0</c>.
     /// </summary>
+    /// <remarks>
+    /// Not interchangeable. The MSI branches on <c>NOT SG</c>, and in Windows Installer that
+    /// means "undefined or empty" — so <c>SG=0</c> is truthy and takes a different path from
+    /// omission. Its behaviour has not been tested against a Change Auditor server, so the
+    /// tool sends nothing rather than something unverified to a Tier 0 host.
+    /// </remarks>
     [Fact]
     public void Cloud_mode_off_omits_the_sg_switch_entirely()
     {
@@ -157,8 +163,9 @@ public sealed class CommandConstructionTests
 }
 
 /// <summary>
-/// Org ID validation. PRD-OPEN-Q: Q2 — the format is unknown, so the documented default
-/// applies: non-empty, trimmed, warn on characters needing quoting.
+/// Org ID validation. PRD Q2, answered: the format follows the deployment mode — a tenant
+/// GUID for Identity Defense, a short installation name for Change Auditor. A disagreement
+/// between the value and the mode warns; it never blocks.
 /// </summary>
 public sealed class OrgIdValidationTests
 {
@@ -176,14 +183,56 @@ public sealed class OrgIdValidationTests
         Assert.Contains("INSTALLATION_NAME", result.Error, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void A_plain_org_id_validates_without_warnings()
+    /// <summary>
+    /// PRD Q2, answered: the expected format follows the mode. A tenant GUID for Identity
+    /// Defense, a short installation name for Change Auditor. Each is silent in its own mode.
+    /// </summary>
+    [Theory]
+    [InlineData("c3a22555-da90-4a57-8042-c543d0c32bc3", true)]
+    [InlineData("DEFAULT", false)]
+    [InlineData("org-abc-123", false)]
+    public void An_org_id_matching_its_mode_validates_without_warnings(string value, bool cloudMode)
     {
-        var result = OrgId.Validate("org-abc-123");
+        var result = OrgId.Validate(value, cloudMode);
 
         Assert.True(result.IsValid);
-        Assert.Equal("org-abc-123", result.Value);
+        Assert.Equal(value, result.Value);
         Assert.Empty(result.Warnings);
+    }
+
+    /// <summary>
+    /// A value that disagrees with the mode is warned about, never rejected.
+    /// </summary>
+    /// <remarks>
+    /// Both a GUID and a short name are perfectly valid Org IDs, so nothing else in the tool
+    /// can tell that the wrong one was pasted — and the checkbox is as likely to be the wrong
+    /// control as the text box, which is why the warning names both and blocks neither.
+    /// </remarks>
+    [Theory]
+    [InlineData("DEFAULT", true, "not a GUID")]
+    [InlineData("c3a22555-da90-4a57-8042-c543d0c32bc3", false, "is a GUID")]
+    public void An_org_id_that_disagrees_with_the_mode_warns_without_blocking(
+        string value,
+        bool cloudMode,
+        string expected)
+    {
+        var result = OrgId.Validate(value, cloudMode);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(value, result.Value);
+        Assert.Contains(result.Warnings, w => w.Contains(expected, StringComparison.Ordinal));
+    }
+
+    /// <summary>The error names the right product when nothing has been entered at all.</summary>
+    [Theory]
+    [InlineData(true, "Identity Defense")]
+    [InlineData(false, "Change Auditor")]
+    public void The_missing_org_id_error_names_the_product_for_the_mode(bool cloudMode, string expected)
+    {
+        var result = OrgId.Validate(null, cloudMode);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(expected, result.Error!, StringComparison.Ordinal);
     }
 
     [Fact]

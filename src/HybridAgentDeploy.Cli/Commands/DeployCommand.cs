@@ -34,7 +34,8 @@ internal static class DeployCommand
 
         // PRD 11: a single blocking checklist, every item evaluated, before anything starts.
         var preflight = await new PreflightValidator(services.MsiInspector, services.Resolver)
-            .ValidateAsync(options.MsiPath, options.OrgId, selection.Targets, logDirectory, cancellationToken)
+            .ValidateAsync(options.MsiPath, options.OrgId, selection.Targets, logDirectory, cancellationToken,
+                cloudMode: !options.NoCloudMode)
             .ConfigureAwait(false);
 
         foreach (var check in preflight.Checks)

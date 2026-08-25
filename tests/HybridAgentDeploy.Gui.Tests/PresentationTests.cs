@@ -517,7 +517,7 @@ public sealed class DeploymentFormStateTests
     [Fact]
     public void The_command_preview_shows_the_real_command()
     {
-        var preview = Ready.CommandPreview(cloudMode: true);
+        var preview = Ready.CommandPreview();
 
         Assert.StartsWith("msiexec /i ", preview, StringComparison.Ordinal);
         Assert.Contains("SG=1", preview, StringComparison.Ordinal);
@@ -526,17 +526,76 @@ public sealed class DeploymentFormStateTests
         Assert.Contains("/qn", preview, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Cloud mode off omits SG rather than sending SG=0 — a deliberate decision, because the
+    /// MSI branches on <c>NOT SG</c> and in Windows Installer that means "undefined or empty",
+    /// so SG=0 is not the same thing as omission and has not been tested against a Change
+    /// Auditor server.
+    /// </summary>
     [Fact]
-    public void The_command_preview_reflects_cloud_mode_being_turned_off()
+    public void The_command_preview_omits_sg_entirely_when_cloud_mode_is_off()
     {
-        Assert.DoesNotContain("SG=1", Ready.CommandPreview(cloudMode: false), StringComparison.Ordinal);
+        var preview = (Ready with { CloudMode = false }).CommandPreview();
+
+        Assert.DoesNotContain("SG=1", preview, StringComparison.Ordinal);
+        Assert.DoesNotContain("SG=0", preview, StringComparison.Ordinal);
+        Assert.Contains("INSTALLATION_NAME=", preview, StringComparison.Ordinal);
     }
 
     [Fact]
     public void The_command_preview_explains_itself_when_it_cannot_be_built()
     {
-        Assert.Contains("select an installer", (Ready with { Msi = null }).CommandPreview(true), StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("valid Org ID", (Ready with { OrgId = "" }).CommandPreview(true), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("select an installer", (Ready with { Msi = null }).CommandPreview(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("valid Org ID", (Ready with { OrgId = "" }).CommandPreview(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The two controls disagreeing is the mistake most likely to reach a domain controller
+    /// unnoticed, because both a GUID and a short name are perfectly valid Org IDs.
+    /// </summary>
+    [Fact]
+    public void A_guid_org_id_with_cloud_mode_off_warns_without_blocking()
+    {
+        var state = Ready with { CloudMode = false };
+
+        Assert.True(state.CanStart);
+        Assert.Contains(
+            state.OrgIdValidation.Warnings,
+            w => w.Contains("Change Auditor", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_short_org_id_with_cloud_mode_on_warns_without_blocking()
+    {
+        var state = Ready with { OrgId = "DEFAULT" };
+
+        Assert.True(state.CanStart);
+        Assert.Contains(
+            state.OrgIdValidation.Warnings,
+            w => w.Contains("not a GUID", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_matching_org_id_and_mode_produces_no_warning()
+    {
+        Assert.Empty(Ready.OrgIdValidation.Warnings);
+        Assert.Empty((Ready with { CloudMode = false, OrgId = "DEFAULT" }).OrgIdValidation.Warnings);
+    }
+
+    /// <summary>
+    /// Which product the agent will report to afterwards is set by a checkbox that is easy to
+    /// leave at its last value, so the confirmation dialog restates it.
+    /// </summary>
+    [Fact]
+    public void The_confirmation_prompt_names_the_product_the_agent_will_report_to()
+    {
+        Assert.Contains(
+            "Identity Defense", Ready.ConfirmationPrompt(["dc01.corp.local"], 0), StringComparison.Ordinal);
+
+        Assert.Contains(
+            "Change Auditor",
+            (Ready with { CloudMode = false, OrgId = "DEFAULT" }).ConfirmationPrompt(["dc01.corp.local"], 0),
+            StringComparison.Ordinal);
     }
 
     /// <summary>PRD 8.3: the confirmation dialog restates the target count and the Org ID.</summary>

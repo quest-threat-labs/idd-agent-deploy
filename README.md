@@ -130,7 +130,9 @@ does. On each selected domain controller it:
 - writes a 4 KB file of random bytes to `C:\Windows\Temp\HybridAgentDeploy\validate-{guid}`
   and verifies its SHA-256 on the way back;
 - opens a remoting session and runs `cmd /c exit 0`;
-- reads which Change Auditor agent is installed, from both registry views;
+- reads the Windows build number, and reports anything below Server 2016 as not ready —
+  the MSI refuses those outright through a launch condition;
+- reads which agent is installed, from both registry views, and which product it reports to;
 - deletes the file.
 
 Nothing is installed, the package is never copied to a target, and msiexec is never run.
@@ -148,6 +150,11 @@ the selected package yields a fresh install, an upgrade, a reinstall of the same
 downgrade the installer will refuse with 1638. The last of those shows amber rather than
 green: nothing is wrong with the host, but it is not a target for this package.
 
+**It catches a mode change, which a version comparison alone cannot.** See below — an
+upgrade that moves an agent between the two products changes which one it reports to, or
+fails to move it at all, regardless of which version is newer. The mode outranks the version
+in the verdict for that reason.
+
 **Pacing is identical to a deployment's** — the ceiling of five (R7.1) and the site guard
 (R7.2), which the Progress tab now states in words, because a run deliberately held at two
 at a time otherwise looks like a hung one. The circuit breaker is deliberately *not*
@@ -160,6 +167,52 @@ An Org ID is not required — no installer runs, so there is nothing for one to 
 `results.csv` into its own timestamped folder suffixed `-validate`, and leaves
 `deployment_run` untouched. Nothing was deployed; a history that said otherwise would
 misreport what ran against the customer's domain controllers.
+
+## The two agent modes
+
+The agent installs in one of two modes, and the **Cloud mode (SG=1)** checkbox picks which:
+
+| Checkbox | msiexec | Reports to | Org ID looks like |
+|---|---|---|---|
+| On | `SG=1` | Identity Defense (cloud) | a tenant GUID |
+| Off | `SG` omitted entirely | Change Auditor (on-premises) | a short name, e.g. `DEFAULT` |
+
+Deploying in Change Auditor mode is **out of scope for v1** — it is untested against a
+Change Auditor server — but nothing in the tool forecloses it.
+
+**Cloud mode off omits `SG` rather than passing `SG=0`.** These are not interchangeable: the
+MSI branches on `NOT SG`, and in Windows Installer that means "undefined or empty", so
+`SG=0` is truthy and takes a different path from omission. The installer's own cloud-mode
+condition is `SG AND (SG="1")`, which omission satisfies correctly. Sending `SG=0` has not
+been tested against a Change Auditor server, so the tool sends nothing rather than something
+unverified to a Tier 0 host.
+
+**Moving an existing agent between the two is asymmetric.** Per the agent's developer
+documentation:
+
+| Installed | Deployed with | Result |
+|---|---|---|
+| Change Auditor | `SG=1` | **Migrates** to Identity Defense. Supported, and one-way. |
+| Identity Defense | `SG` omitted | Does **not** move back. The run leaves it on Identity Defense. |
+
+Validation reads the installed mode from
+`HKLM\SOFTWARE\Quest\ChangeAuditor\Agent\SgConnectionMode` — the same value the installer
+reads — and reports both cases before the run, because neither is visible from a version
+comparison. A migration is shown amber rather than green: it succeeds, but it changes which
+product a domain controller reports to, and the checkbox driving it defaults to **on**, so it
+can be reached by inaction rather than by decision.
+
+The MSI's `UPGRADE_SG_MISMATCH` property is *not* a refusal, despite the name. Its only
+consumer in the whole package is the condition deciding whether the previously registered
+installation name is carried forward — which is exactly what a migration needs, since a
+Change Auditor installation name is meaningless as an Identity Defense tenant GUID. Nothing
+blocks on it. The unsupported direction comes from the documentation, not from anything the
+package enforces.
+
+**An Org ID that disagrees with the checkbox warns; it never blocks.** Both a GUID and a
+short name are valid Org IDs, so nothing else can tell that the wrong one was pasted — and
+the checkbox is as likely to be the wrong control as the text box. The warning names both
+and leaves the operator to decide.
 
 ## Test fixtures
 

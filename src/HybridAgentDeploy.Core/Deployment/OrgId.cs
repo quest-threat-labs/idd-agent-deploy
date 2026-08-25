@@ -18,18 +18,24 @@ public sealed record OrgIdValidation(
 /// </summary>
 /// <remarks>
 /// <para>
-/// PRD-OPEN-Q: Q2 — the valid format of the Org ID is not yet known. Until it is, the
-/// documented default applies: require non-empty, trim, and warn on characters that would
-/// need quoting. Add strict validation once PM confirms the format.
+/// PRD Q2, answered: the expected format depends on which product the agent is being pointed
+/// at. In Identity Defense (cloud) mode — <c>SG=1</c> — it is the tenant GUID. In Change
+/// Auditor (on-premises) mode — where <c>SG</c> is absent — it is a short installation name
+/// such as <c>DEFAULT</c>.
 /// </para>
 /// <para>
-/// Because Q2 is open, this deliberately does <em>not</em> reject shell metacharacters.
-/// Rejecting them would risk refusing a legitimate Org ID whose format nobody has confirmed,
-/// with no way for the operator to override. The injection concern in SEC10 is instead
-/// answered structurally by <see cref="RemoteCommand"/>: the value occupies one argument slot
-/// and nothing downstream re-parses it, so a metacharacter in the Org ID is inert rather than
-/// merely escaped. The warnings below exist so the operator still notices a value that looks
-/// like a mistake.
+/// A value that disagrees with the selected mode is <em>warned about, not rejected</em>. The
+/// two are independent controls and either could be the one that is wrong, so the operator is
+/// told they disagree and left to decide which to change. Rejecting would also mean this
+/// utility deciding the format of an identifier issued by another product, which is not a
+/// judgement it is in a position to make correctly for every customer.
+/// </para>
+/// <para>
+/// Shell metacharacters are likewise not rejected. The injection concern in SEC10 is answered
+/// structurally by <see cref="RemoteCommand"/>: the value occupies one argument slot and
+/// nothing downstream re-parses it, so a metacharacter is inert rather than merely escaped.
+/// The warnings exist so the operator still notices a value that looks like a mistake. The
+/// one exception is the double quote — see below.
 /// </para>
 /// </remarks>
 public static class OrgId
@@ -48,15 +54,25 @@ public static class OrgId
     private static readonly char[] ShellSignificantCharacters =
         ['\'', ';', '&', '|', '`', '$', '<', '>', '^', '%', '(', ')', '{', '}'];
 
-    public static OrgIdValidation Validate(string? rawValue)
+    /// <param name="cloudMode">
+    /// True when the run will pass <c>SG=1</c> and the agent will report to Identity Defense.
+    /// False for Change Auditor, where <c>SG</c> is omitted entirely. Only affects the
+    /// warnings: the same values are accepted either way.
+    /// </param>
+    public static OrgIdValidation Validate(string? rawValue, bool cloudMode = true)
     {
         if (string.IsNullOrWhiteSpace(rawValue))
         {
             return new OrgIdValidation(
                 IsValid: false,
                 Value: null,
-                Error: "An Org ID is required. It identifies the Identity Defense tenant the " +
-                       "agent reports to, and is passed to the installer as INSTALLATION_NAME.",
+                Error: cloudMode
+                    ? "An Org ID is required. In cloud mode it is the GUID identifying the " +
+                      "Identity Defense tenant the agent reports to, and is passed to the " +
+                      "installer as INSTALLATION_NAME."
+                    : "An Org ID is required. With cloud mode off it is the Change Auditor " +
+                      "installation name — a short value such as DEFAULT — and is passed to " +
+                      "the installer as INSTALLATION_NAME.",
                 Warnings: []);
         }
 
@@ -82,6 +98,27 @@ public static class OrgId
         }
 
         var warnings = new List<string>();
+
+        // The two controls disagreeing is the mistake most likely to reach a domain controller
+        // unnoticed: both a GUID and a short name are perfectly valid Org IDs, so nothing else
+        // in the tool can tell that the wrong one was pasted. Warned in both directions,
+        // because either control could be the one that is wrong.
+        var looksLikeGuid = Guid.TryParse(trimmed, out _);
+
+        if (cloudMode && !looksLikeGuid)
+        {
+            warnings.Add(
+                $"Cloud mode is on, which points the agent at Identity Defense, but '{trimmed}' " +
+                "is not a GUID. An Identity Defense Org ID is the tenant GUID. If you meant to " +
+                "deploy against on-premises Change Auditor, turn cloud mode off.");
+        }
+        else if (!cloudMode && looksLikeGuid)
+        {
+            warnings.Add(
+                "Cloud mode is off, which points the agent at on-premises Change Auditor, but " +
+                $"'{trimmed}' is a GUID. Change Auditor uses a short installation name such as " +
+                "DEFAULT. If you meant to deploy against Identity Defense, turn cloud mode on.");
+        }
 
         if (!string.Equals(rawValue, trimmed, StringComparison.Ordinal))
         {

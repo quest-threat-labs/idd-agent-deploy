@@ -28,10 +28,24 @@ public static class MsiCommandBuilder
     /// argument slot, so its content cannot affect the structure of the command (SEC10).
     /// </param>
     /// <param name="cloudMode">
-    /// Emits <c>SG=1</c> when set. PRD-OPEN-Q: Q1 — exposed as a checkbox defaulting to on.
-    /// If PM confirms cloud mode is the only mode this utility targets, simplify to a
-    /// hardcoded SG=1 and remove the control.
+    /// Emits <c>SG=1</c> when set, and omits <c>SG</c> entirely when not.
     /// </param>
+    /// <remarks>
+    /// <para>
+    /// PRD Q1, answered: the agent installs in two modes, and the control stays. <c>SG=1</c>
+    /// points it at the Identity Defense cloud product; its absence points it at on-premises
+    /// Change Auditor. Deploying in Change Auditor mode is out of scope for v1, but nothing
+    /// here forecloses it.
+    /// </para>
+    /// <para>
+    /// <b>The off case omits <c>SG</c> rather than passing <c>SG=0</c>, deliberately.</b> The
+    /// MSI branches on <c>NOT SG</c>, and in Windows Installer that means "undefined or
+    /// empty" — so <c>SG=0</c> is <em>truthy</em> and takes a different path from omission.
+    /// The installer's own condition for cloud mode is <c>SG AND (SG="1")</c>, which omission
+    /// satisfies correctly. Passing <c>SG=0</c> has not been tested against a Change Auditor
+    /// server, so this sends nothing rather than sending something unverified to a Tier 0 host.
+    /// </para>
+    /// </remarks>
     public static RemoteCommand BuildInstallCommand(
         string stagedMsiPath,
         string logPath,

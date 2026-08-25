@@ -61,12 +61,17 @@ public sealed class PreflightValidator
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
     }
 
+    /// <param name="cloudMode">
+    /// Whether the run will pass <c>SG=1</c>. Only affects the Org ID warnings — a GUID is
+    /// expected for Identity Defense, a short installation name for Change Auditor.
+    /// </param>
     public async Task<PreflightReport> ValidateAsync(
         string msiPath,
         string? orgId,
         IReadOnlyList<DeploymentTarget> targets,
         string logDirectory,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool cloudMode = true)
     {
         var checks = new List<PreflightCheck>();
         var warnings = new List<string>();
@@ -96,7 +101,7 @@ public sealed class PreflightValidator
         }
 
         // 2. The Org ID is present.
-        var orgIdValidation = OrgId.Validate(orgId);
+        var orgIdValidation = OrgId.Validate(orgId, cloudMode);
         checks.Add(new PreflightCheck(
             "Org ID",
             orgIdValidation.IsValid,

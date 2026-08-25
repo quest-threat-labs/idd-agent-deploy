@@ -361,13 +361,33 @@ internal sealed class ProgressTab : UserControl
             "Nothing was installed. No deployment history was recorded.",
         };
 
-        if (summary.WouldBeRefusedCount > 0)
+        if (summary.MigrationCount > 0)
         {
             lines.Add(string.Empty);
             lines.Add(
-                $"{summary.WouldBeRefusedCount} domain controller(s) are reachable but already " +
-                "carry a newer agent than this package. msiexec would refuse the install with " +
-                "exit code 1638.");
+                $"{summary.MigrationCount} domain controller(s) currently report to " +
+                "on-premises Change Auditor and WOULD BE MIGRATED to the Identity Defense " +
+                "cloud tenant by this run. That is supported and will succeed — but it is a " +
+                "one-way change, so confirm it is what you intend. Turning cloud mode off " +
+                "leaves them on Change Auditor.");
+        }
+
+        if (summary.UnsupportedModeChangeCount > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add(
+                $"{summary.UnsupportedModeChangeCount} domain controller(s) already report to " +
+                "Identity Defense. An agent does not move back to on-premises Change Auditor, " +
+                "so this run would not change them.");
+        }
+
+        var newerAgents = summary.WouldBeRefusedCount - summary.UnsupportedModeChangeCount;
+        if (newerAgents > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add(
+                $"{newerAgents} domain controller(s) are reachable but already carry a newer " +
+                "agent than this package. msiexec would refuse the install with exit code 1638.");
         }
 
         if (summary.WasCancelled)

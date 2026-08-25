@@ -13,16 +13,25 @@ asks for. The equivalent CLI commands are noted where they help set a case up.
 
 ## Lab state as of Phase 5
 
-| DC | OS | Domain | Site | Agent installed |
-|---|---|---|---|---|
-| `RnD-DC.research.titancorp.local` | Server 2025 | child | Titancorp-CVG | 7.7.34005.0 |
-| `DC2.titancorp.local` | Server 2025 | root | Titancorp-CVG | 7.6.35001.2 |
-| `dc4.titancorp.local` | Server 2019 | root | Titancorp-CVG | 7.6.35001.2 |
-| `DC5.titancorp.local` | Server 2019 | root | Titancorp-CVG | 7.6.35001.2 |
-| `DC6.titancorp.local` | Server 2022 | root | Titancorp-CVG | 7.6.35001.2 |
+| DC | OS | Domain | Site | Agent installed | Mode |
+|---|---|---|---|---|---|
+| `RnD-DC.research.titancorp.local` | Server 2025 | child | Titancorp-CVG | 7.7.34005.0 | Identity Defense (`SgConnectionMode=1`) |
+| `DC2.titancorp.local` | Server 2025 | root | Titancorp-CVG | 7.6.35001.2 | Change Auditor (`SgConnectionMode=0`) |
+| `dc4.titancorp.local` | Server 2019 | root | Titancorp-CVG | 7.6.35001.2 | Change Auditor (`SgConnectionMode=0`) |
+| `DC5.titancorp.local` | Server 2019 | root | Titancorp-CVG | 7.6.35001.2 | Change Auditor (`SgConnectionMode=0`) |
+| `DC6.titancorp.local` | Server 2022 | root | Titancorp-CVG | 7.6.35001.2 | Change Auditor (`SgConnectionMode=0`) |
 
 All five are in one site, so §R7.2 caps a full-forest run at **2 concurrent** whatever
 max-parallel says. That is expected, not a defect — the run log states the limit in effect.
+
+**The mode column matters more than it looks.** Four of the five agents are installed for
+on-premises Change Auditor, not for Identity Defense. A cloud-mode deployment to any of them
+would **migrate** them to the cloud tenant — supported, and one-way. `RnD-DC` gives the other
+case: it is already on Identity Defense and does not move back. So the lab exercises both
+directions of the asymmetry without arranging anything.
+
+Every OS here is Server 2016 or later, so the minimum-version check has no negative case in
+this lab.
 
 ---
 
@@ -133,7 +142,11 @@ messages, and arranging a failure is what the lab is for.
 
 | Check | Expected |
 |---|---|
-| Select an MSI, tick DCs, leave Org ID empty | Start is disabled; **Validate targets** is enabled |
+| Select an MSI, tick DCs, leave Org ID empty | Start is disabled; **Validate targets** is enabled. The message names the GUID or the short name depending on the cloud-mode checkbox |
+| Validate with cloud mode **on** | The four root-domain DCs read "migrates to cloud" in amber; `RnD-DC` reads "ready - reinstall" |
+| Validate with cloud mode **off** | `RnD-DC` reads "stays on cloud" in amber; the other four read "ready - upgrade" — they are already on Change Auditor, so nothing changes mode |
+| Enter `DEFAULT` with cloud mode on | Amber warning naming both controls; Start stays **enabled** |
+| Enter a GUID with cloud mode off | The mirror-image warning; Start stays **enabled** |
 | Click Validate | Confirmation lists the five steps and says plainly that nothing is installed |
 | During the run | Progress tab shows the pacing line, live per-target stages, and the busy-slot count |
 | After the run | Each row shows ready/upgrade/reinstall against the package's version; `Retry failed targets` stays disabled |
@@ -148,7 +161,7 @@ messages, and arranging a failure is what the lab is for.
 
 ## What automated tests already cover
 
-Do not spend manual time re-checking these — 441 automated tests cover them, and the lab
+Do not spend manual time re-checking these — 476 automated tests cover them, and the lab
 tests run against real domain controllers:
 
 - Exit-code mapping for every row of §10.1, including 1618 retry and the 3010/1641 successes.

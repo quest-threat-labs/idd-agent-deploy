@@ -40,15 +40,26 @@ HybridAgentDeploy.slnx
 │   │   ├── Logging/                     # File sink, per-run run.log writer
 │   │   ├── Models/
 │   │   └── Msi/                         # MSI property extraction
-│   └── HybridAgentDeploy.Cli/           # Console. Thin — presentation only.
+│   ├── HybridAgentDeploy.Cli/           # Console. Thin — presentation only.
+│   └── HybridAgentDeploy.Gui/           # WinForms. Thin — presentation only.
+│       ├── Presentation/                # Testable: filters, selection, colours, form state
+│       └── Views/                       # The five screens of §8
 └── tests/
     ├── HybridAgentDeploy.Core.Testing/  # SimulatedTransport, stub resolver
     ├── HybridAgentDeploy.Core.Tests/
     ├── HybridAgentDeploy.Cli.Tests/
+    ├── HybridAgentDeploy.Gui.Tests/
     └── HybridAgentDeploy.Core.IntegrationTests/
 ```
 
-`HybridAgentDeploy.Gui` (WinForms) arrives in Phase 5.
+GUI layout is defined in code, not in generated `.Designer.cs` files, so diffs stay
+reviewable and there is no designer round-trip to corrupt. The Visual Studio designer will
+not render these forms — edit the C#. Logic where a defect could hide (filtering, selection
+across filter changes, outcome colours, whether a run may start) lives in `Presentation/`
+and is unit tested; the forms are thin wiring over it.
+
+The manual test matrix that forms the Phase 5 acceptance criterion is in
+[`docs/manual-test-matrix.md`](docs/manual-test-matrix.md).
 
 ## CLI
 
@@ -165,5 +176,5 @@ travels together.
 | 2 | Deployment orchestrator | Complete |
 | 3 | `WinRmSmbTransport` | Complete |
 | 4 | CLI | Complete (live deploy acceptance run deferred) |
-| 5 | WinForms GUI | Not started |
+| 5 | WinForms GUI | Complete (manual test matrix outstanding) |
 | 6 | Packaging and signing | Not started |

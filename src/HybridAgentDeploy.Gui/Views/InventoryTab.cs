@@ -71,7 +71,7 @@ internal sealed class InventoryTab : UserControl
     {
         return Ui.Bar(
             NewButton("Enumerate from Active Directory...", OnEnumerateAsync),
-            NewButton("Import from file...", OnImportAsync),
+            NewButton("Tag from file...", OnTagFromFileAsync),
             NewButton("Manage tags", _ => { _main.ShowTagsTab(); return Task.CompletedTask; }),
             NewButton("Select all", _ => { SelectVisible(true); return Task.CompletedTask; }),
             NewButton("Select none", _ => { SelectVisible(false); return Task.CompletedTask; }),
@@ -286,11 +286,11 @@ internal sealed class InventoryTab : UserControl
             result.Warnings.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
     }
 
-    private async Task OnImportAsync(Button button)
+    private async Task OnTagFromFileAsync(Button button)
     {
         using var dialog = new OpenFileDialog
         {
-            Title = "Import a list of domain controllers to tag",
+            Title = "Choose a file listing the domain controllers to tag",
             Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
         };
 
@@ -312,7 +312,7 @@ internal sealed class InventoryTab : UserControl
             return;
         }
 
-        using var busy = new BusyScope(this, button, "Importing...");
+        using var busy = new BusyScope(this, button, "Tagging...");
 
         var service = new FileImportService(
             _main.DomainControllers, _main.Tags, _main.Resolver, _main.Logger<FileImportService>());
@@ -324,7 +324,7 @@ internal sealed class InventoryTab : UserControl
         }
         catch (Exception ex) when (ex is InventoryNotEnumeratedException or FileNotFoundException)
         {
-            MessageBox.Show(this, ex.Message, "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, ex.Message, "Could not tag from file", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -349,7 +349,7 @@ internal sealed class InventoryTab : UserControl
                 $"{report.Duplicates.Count} duplicate line(s) were ignored.";
         }
 
-        MessageBox.Show(this, message, "Import complete", MessageBoxButtons.OK,
+        MessageBox.Show(this, message, "Tagging complete", MessageBoxButtons.OK,
             report.HasProblems ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
     }
 

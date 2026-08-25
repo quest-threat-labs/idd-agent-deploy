@@ -37,7 +37,9 @@ internal sealed class TemporaryInventory : IAsyncDisposable
         var directory = Path.Combine(Path.GetTempPath(), "had-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
 
-        var connections = new SqliteConnectionFactory(Path.Combine(directory, "inventory.db"));
+        // Pooling off so disposing releases the file and the directory can be deleted, without
+        // the process-wide ClearAllPools that raced other test classes running in parallel.
+        var connections = new SqliteConnectionFactory(Path.Combine(directory, "inventory.db"), pooling: false);
         await new SchemaMigrator(connections).MigrateAsync(ct);
 
         return new TemporaryInventory(directory, connections);
@@ -45,8 +47,10 @@ internal sealed class TemporaryInventory : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        // Release the pooled connections holding the file, or the delete fails on Windows.
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        // No ClearAllPools here. It is process-wide, and with xUnit running test classes in
+        // parallel it pulled pooled connections out from under other classes mid-test — an
+        // intermittent failure that surfaced in whichever unrelated test happened to be
+        // running. This factory disables pooling instead, so closing releases the file.
         await Task.Yield();
 
         try

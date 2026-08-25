@@ -15,7 +15,17 @@ public sealed class SqliteConnectionFactory
     private readonly string _connectionString;
     private int _journalModeConfigured;
 
-    public SqliteConnectionFactory(string databasePath)
+    /// <param name="pooling">
+    /// Whether connections are pooled. On by default, which is what a running utility wants.
+    /// </param>
+    /// <remarks>
+    /// Tests turn pooling off so that closing a connection releases the file immediately and
+    /// the database can be deleted. The alternative — <c>SqliteConnection.ClearAllPools</c> — is
+    /// process-wide, so a test class calling it during teardown pulled pooled connections out
+    /// from under every other test class running in parallel. That produced an intermittent,
+    /// unattributable failure in an unrelated test.
+    /// </remarks>
+    public SqliteConnectionFactory(string databasePath, bool pooling = true)
     {
         if (string.IsNullOrWhiteSpace(databasePath))
         {
@@ -28,7 +38,7 @@ public sealed class SqliteConnectionFactory
             DataSource = DatabasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Default,
-            Pooling = true,
+            Pooling = pooling,
         }.ToString();
     }
 

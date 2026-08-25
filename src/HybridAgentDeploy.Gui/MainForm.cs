@@ -35,6 +35,7 @@ internal sealed class MainForm : Form
     private readonly HistoryTab _historyTab;
 
     private readonly TabPage _progressPage;
+    private readonly TabPage _tagsPage;
 
     public MainForm(
         AppConfiguration configuration,
@@ -62,14 +63,17 @@ internal sealed class MainForm : Form
         _progressTab = new ProgressTab(this);
         _historyTab = new HistoryTab(this);
 
-        _tabs.TabPages.Add(NewPage("Inventory", _inventoryTab));
-        _tabs.TabPages.Add(NewPage("Tags", _tagsTab));
-        _tabs.TabPages.Add(NewPage("Deploy", _deployTab));
-
+        // Ordered as the operator works: look at the inventory, deploy, watch it, review what
+        // happened. Tagging is occasional housekeeping, so it sits at the end rather than
+        // between the inventory and the deployment screen.
         _progressPage = NewPage("Progress", _progressTab);
-        _tabs.TabPages.Add(_progressPage);
+        _tagsPage = NewPage("Tags", _tagsTab);
 
+        _tabs.TabPages.Add(NewPage("Inventory", _inventoryTab));
+        _tabs.TabPages.Add(NewPage("Deploy", _deployTab));
+        _tabs.TabPages.Add(_progressPage);
         _tabs.TabPages.Add(NewPage("History", _historyTab));
+        _tabs.TabPages.Add(_tagsPage);
 
         Controls.Add(_tabs);
 
@@ -164,18 +168,14 @@ internal sealed class MainForm : Form
 
     public HistoryTab History => _historyTab;
 
-    /// <summary>Switches to the Tags tab, for the Inventory tab's "Manage tags" button.</summary>
-    public void ShowTagsTab() => _tabs.SelectedIndex = 1;
-
     /// <summary>
     /// Sizes the window once the form exists, from the space actually available.
     /// </summary>
     /// <remarks>
-    /// Sized from the working area rather than to fixed pixels, because these tools get run
-    /// dimensions set there, which turned a requested 1280x820 into an 853x547 window on a
-    /// 100% DPI display and cropped the inventory grid's right-hand columns. Values assigned
-    /// after load are not rescaled, and deriving them from the working area means the window
-    /// is sensible on a laptop and on the very wide displays these tools tend to be run on.
+    /// Derived from the working area rather than fixed in pixels. These get run on anything
+    /// from a laptop to the very wide displays administrators tend to have, and a hard-coded
+    /// size that suits one is wrong on the other. Set after load, where it is not subject to
+    /// the automatic scaling applied to dimensions assigned in the constructor.
     /// </remarks>
     protected override void OnLoad(EventArgs e)
     {

@@ -14,7 +14,7 @@ public sealed class SchemaMigrationTests
         var directory = CreateTempDirectory();
         try
         {
-            var connections = new SqliteConnectionFactory(Path.Combine(directory, "inventory.db"));
+            var connections = new SqliteConnectionFactory(Path.Combine(directory, "inventory.db"), pooling: false);
             var migrator = new SchemaMigrator(connections);
 
             Assert.Equal(0, await migrator.GetCurrentVersionAsync(CancellationToken.None));
@@ -35,7 +35,7 @@ public sealed class SchemaMigrationTests
         var directory = CreateTempDirectory();
         try
         {
-            var connections = new SqliteConnectionFactory(Path.Combine(directory, "inventory.db"));
+            var connections = new SqliteConnectionFactory(Path.Combine(directory, "inventory.db"), pooling: false);
             var migrator = new SchemaMigrator(connections);
 
             var first = await migrator.MigrateAsync(CancellationToken.None);
@@ -157,7 +157,8 @@ public sealed class SchemaMigrationTests
 
     private static void Cleanup(string directory)
     {
-        SqliteConnection.ClearAllPools();
+        // Deliberately no ClearAllPools: it is process-wide and races the other test classes
+        // xUnit runs in parallel. These factories disable pooling instead.
         try
         {
             Directory.Delete(directory, recursive: true);

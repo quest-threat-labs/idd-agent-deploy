@@ -34,12 +34,20 @@ internal sealed class InventoryTab : UserControl
     private readonly ComboBox _outcomeFilter = new() { Width = 160, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _status = new() { AutoSize = true, Padding = new Padding(8, 8, 0, 0) };
 
+    private Button _editTags = null!;
     private IReadOnlyList<InventoryRow> _visible = [];
     private bool _suppressCellEvents;
 
     public InventoryTab(MainForm main)
     {
         _main = main;
+
+        // Created before anything below can render the grid. Setting the outcome filter's
+        // initial index fires SelectedIndexChanged, which reaches UpdateStatus and reads this
+        // button's enabled state — creating it later in BuildActionBar left it null at that
+        // moment, and the application failed to start at all.
+        _editTags = NewButton("Edit tags...", OnEditTagsAsync);
+        _editTags.Enabled = false;
 
         BuildColumns();
 
@@ -71,11 +79,61 @@ internal sealed class InventoryTab : UserControl
     {
         return Ui.Bar(
             NewButton("Enumerate from Active Directory...", OnEnumerateAsync),
-            NewButton("Import from file...", OnImportAsync),
-            NewButton("Manage tags", _ => { _main.ShowTagsTab(); return Task.CompletedTask; }),
+            NewButton("Tag from file...", OnTagFromFileAsync),
+            _editTags,
             NewButton("Select all", _ => { SelectVisible(true); return Task.CompletedTask; }),
             NewButton("Select none", _ => { SelectVisible(false); return Task.CompletedTask; }),
             _status);
+    }
+
+    /// <summary>
+    /// Adds and removes tags across the ticked domain controllers (PRD 8.1).
+    /// </summary>
+    /// <remarks>
+    /// Acts on the ticked selection — the same one the Deploy tab uses — so the application has
+    /// a single answer to "which domain controllers am I working with", and a selection built
+    /// across several filters is not lost by changing one.
+    /// </remarks>
+    private async Task OnEditTagsAsync(Button button)
+    {
+        var selected = _main.Inventory.Where(r => _main.Selection.IsSelected(r.DcId)).ToList();
+
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        var edits = TagEditDialog.Show(
+            this,
+            Presentation.TagList.Build(_main.AllTags, _main.Inventory),
+            selected,
+            _main.Selection.HiddenSelectedCount(_visible));
+
+        if (edits is null)
+        {
+            return;
+        }
+
+        using var busy = new BusyScope(this, button, "Applying...");
+
+        var dcIds = selected.Select(r => r.DcId).ToList();
+
+        foreach (var name in edits.Add)
+        {
+            var tag = await _main.Tags.GetOrCreateAsync(name, null, CancellationToken.None);
+            await _main.Tags.ApplyTagAsync(tag.Id, dcIds, CancellationToken.None);
+        }
+
+        foreach (var name in edits.Remove)
+        {
+            // A tag being removed necessarily exists; guard anyway rather than assume.
+            if (await _main.Tags.GetByNameAsync(name, CancellationToken.None) is { } tag)
+            {
+                await _main.Tags.RemoveTagAsync(tag.Id, dcIds, CancellationToken.None);
+            }
+        }
+
+        await _main.RefreshInventoryAsync();
     }
 
     private Control BuildFilterBar()
@@ -213,6 +271,9 @@ internal sealed class InventoryTab : UserControl
         _status.Text =
             $"{_visible.Count} of {_main.Inventory.Count} shown · {_main.Selection.Count} selected" +
             (hidden > 0 ? $" ({hidden} hidden by the current filter)" : string.Empty);
+
+        // Editing tags needs domain controllers to edit them on.
+        _editTags.Enabled = _main.Selection.Count > 0;
     }
 
     private void OnCellValueChanged(object? sender, DataGridViewCellEventArgs e)
@@ -286,11 +347,11 @@ internal sealed class InventoryTab : UserControl
             result.Warnings.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
     }
 
-    private async Task OnImportAsync(Button button)
+    private async Task OnTagFromFileAsync(Button button)
     {
         using var dialog = new OpenFileDialog
         {
-            Title = "Import a list of domain controllers to tag",
+            Title = "Choose a file listing the domain controllers to tag",
             Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
         };
 
@@ -299,20 +360,20 @@ internal sealed class InventoryTab : UserControl
             return;
         }
 
-        var tagName = Prompt.ForText(
+        // Chosen from the tags that exist rather than typed. A name that does not quite match
+        // an existing tag would create a second one and split the group the operator meant to
+        // build — invisibly, until a later deployment targeted half of it.
+        var tagNames = TagSelectionDialog.Show(
             this,
-            "Tag to apply",
-            "Every domain controller named in the file will be given this tag." +
-            Environment.NewLine + Environment.NewLine +
-            "Import selects and tags controllers already discovered from Active Directory; it " +
-            "does not add new ones.");
+            Presentation.TagList.Build(_main.AllTags, _main.Inventory),
+            dialog.FileName);
 
-        if (string.IsNullOrWhiteSpace(tagName))
+        if (tagNames is null || tagNames.Count == 0)
         {
             return;
         }
 
-        using var busy = new BusyScope(this, button, "Importing...");
+        using var busy = new BusyScope(this, button, "Tagging...");
 
         var service = new FileImportService(
             _main.DomainControllers, _main.Tags, _main.Resolver, _main.Logger<FileImportService>());
@@ -320,17 +381,19 @@ internal sealed class InventoryTab : UserControl
         ImportReport report;
         try
         {
-            report = await service.ImportFileAsync(dialog.FileName, [tagName], false, CancellationToken.None);
+            report = await service.ImportFileAsync(dialog.FileName, tagNames, false, CancellationToken.None);
         }
         catch (Exception ex) when (ex is InventoryNotEnumeratedException or FileNotFoundException)
         {
-            MessageBox.Show(this, ex.Message, "Import failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, ex.Message, "Could not tag from file", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
         await _main.RefreshInventoryAsync();
 
-        var message = $"{report.Matched.Count} domain controller(s) tagged '{tagName}'.";
+        var message =
+            $"{report.Matched.Count} domain controller(s) tagged " +
+            string.Join(", ", tagNames.Select(t => $"'{t}'")) + ".";
 
         if (report.Unmatched.Count > 0)
         {
@@ -347,7 +410,7 @@ internal sealed class InventoryTab : UserControl
                 $"{report.Duplicates.Count} duplicate line(s) were ignored.";
         }
 
-        MessageBox.Show(this, message, "Import complete", MessageBoxButtons.OK,
+        MessageBox.Show(this, message, "Tagging complete", MessageBoxButtons.OK,
             report.HasProblems ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
     }
 

@@ -1,3 +1,4 @@
+using HybridAgentDeploy.Gui.Views;
 using HybridAgentDeploy.Core.Models;
 using HybridAgentDeploy.Gui.Presentation;
 
@@ -547,4 +548,361 @@ public sealed class TagListTests
     }
 
     private static TagRecord Tag(string name) => new() { Name = name };
+}
+
+/// <summary>
+/// The "Run as" choice on the deployment screen (SEC2).
+/// </summary>
+/// <remarks>
+/// Regression cover for a reported bug: selecting "Alternate account" did not deselect
+/// "Current Windows identity". WinForms scopes radio-button exclusion to the immediate parent,
+/// and each option had been placed in its own row panel — two groups of one.
+///
+/// This was not only cosmetic. Whether alternate credentials are used is decided by the
+/// alternate button's checked state, so an operator who filled in an alternate account and then
+/// clicked back to their current identity would have deployed under the alternate account while
+/// the screen showed otherwise — running against a domain controller as an account other than
+/// the one they believed they had chosen.
+/// </remarks>
+public sealed class RunAsPanelTests
+{
+    [Fact]
+    public void Both_options_share_one_parent_so_windows_treats_them_as_one_group()
+    {
+        using var fixture = new RunAsFixture();
+
+        Assert.NotNull(fixture.Current.Parent);
+        Assert.Same(fixture.Current.Parent, fixture.Alternate.Parent);
+    }
+
+    /// <summary>The behaviour that was reported broken, asserted directly.</summary>
+    [Fact]
+    public void Selecting_the_alternate_account_deselects_the_current_identity()
+    {
+        using var fixture = new RunAsFixture();
+        fixture.Current.Checked = true;
+
+        fixture.Alternate.Checked = true;
+
+        Assert.True(fixture.Alternate.Checked);
+        Assert.False(fixture.Current.Checked);
+    }
+
+    [Fact]
+    public void Selecting_the_current_identity_deselects_the_alternate_account()
+    {
+        using var fixture = new RunAsFixture();
+        fixture.Alternate.Checked = true;
+
+        fixture.Current.Checked = true;
+
+        Assert.True(fixture.Current.Checked);
+        Assert.False(fixture.Alternate.Checked);
+    }
+
+    /// <summary>
+    /// The two can never both be selected, which is what decides whether a run uses the
+    /// operator's own identity or an alternate account.
+    /// </summary>
+    [Fact]
+    public void The_two_options_are_never_selected_at_once()
+    {
+        using var fixture = new RunAsFixture();
+
+        foreach (var select in new[] { true, false, true, true, false })
+        {
+            if (select)
+            {
+                fixture.Alternate.Checked = true;
+            }
+            else
+            {
+                fixture.Current.Checked = true;
+            }
+
+            Assert.False(fixture.Current.Checked && fixture.Alternate.Checked);
+        }
+    }
+
+    [Fact]
+    public void The_alternate_account_fields_are_present_in_the_panel()
+    {
+        using var fixture = new RunAsFixture();
+
+        Assert.Same(fixture.Panel, fixture.UserName.Parent);
+        Assert.Same(fixture.Panel, fixture.Password.Parent);
+    }
+
+    private sealed class RunAsFixture : IDisposable
+    {
+        public RunAsFixture()
+        {
+            Current = new RadioButton { Text = "Current Windows identity", Checked = true };
+            Alternate = new RadioButton { Text = "Alternate account:" };
+            UserName = new TextBox();
+            Password = new TextBox();
+
+            Panel = DeployTab.RunAsPanel(Current, Alternate, UserName, Password);
+
+            // A parent form so the controls behave as they do in the running application.
+            Host = new Form();
+            Host.Controls.Add(Panel);
+        }
+
+        public RadioButton Current { get; }
+
+        public RadioButton Alternate { get; }
+
+        public TextBox UserName { get; }
+
+        public TextBox Password { get; }
+
+        public Control Panel { get; }
+
+        private Form Host { get; }
+
+        public void Dispose() => Host.Dispose();
+    }
+}
+
+/// <summary>
+/// Choosing which tags an import applies (PRD 6.2).
+/// </summary>
+/// <remarks>
+/// The import dialog used to be a free-text box. A name that did not quite match an existing
+/// tag created a second one and split the group the operator was building — silently, and only
+/// visible later when a deployment targeted half the ring. Selection is now from the tags that
+/// exist, and this covers the rules behind that.
+/// </remarks>
+public sealed class TagSelectionModelTests
+{
+    private static TagSelectionModel New(params string[] existing) =>
+        new(existing.Select(name => new TagSummary(name, 0)));
+
+    [Fact]
+    public void Choices_are_listed_alphabetically_regardless_of_case()
+    {
+        var model = New("zulu", "Alpha", "mike");
+
+        Assert.Equal(["Alpha", "mike", "zulu"], model.Choices.Select(c => c.Name));
+    }
+
+    [Fact]
+    public void Nothing_is_selected_until_the_operator_chooses()
+    {
+        var model = New("pilot", "london");
+
+        Assert.Empty(model.Selected);
+        Assert.False(model.CanApply);
+    }
+
+    /// <summary>PRD 6.2 applies one or more tags in a single operation.</summary>
+    [Fact]
+    public void Several_tags_can_be_applied_at_once()
+    {
+        var model = New("pilot", "london", "rodc");
+
+        model.SetSelected("pilot", true);
+        model.SetSelected("rodc", true);
+
+        Assert.Equal(["pilot", "rodc"], model.Selected);
+        Assert.True(model.CanApply);
+    }
+
+    [Fact]
+    public void Deselecting_removes_a_tag_from_the_result()
+    {
+        var model = New("pilot", "london");
+        model.SetSelected("pilot", true);
+        model.SetSelected("london", true);
+
+        model.SetSelected("pilot", false);
+
+        Assert.Equal(["london"], model.Selected);
+    }
+
+    /// <summary>
+    /// The defect this dialog exists to prevent. A name matching an existing tag selects that
+    /// tag rather than adding a near-duplicate that would split the group.
+    /// </summary>
+    [Fact]
+    public void Naming_an_existing_tag_selects_it_rather_than_duplicating_it()
+    {
+        var model = New("pilot");
+
+        var result = model.AddOrSelect("PILOT");
+
+        Assert.Single(model.Choices);
+        Assert.Equal("pilot", result.Name);
+        Assert.Equal(["pilot"], model.Selected);
+    }
+
+    [Fact]
+    public void A_genuinely_new_tag_is_added_and_selected()
+    {
+        var model = New("pilot");
+
+        model.AddOrSelect("phase-2");
+
+        Assert.Equal(["phase-2", "pilot"], model.Choices.Select(c => c.Name));
+        Assert.Equal(["phase-2"], model.Selected);
+        Assert.True(model.CanApply);
+    }
+
+    [Fact]
+    public void A_new_tag_is_trimmed()
+    {
+        var model = New();
+
+        Assert.Equal("phase-2", model.AddOrSelect("  phase-2  ").Name);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void An_empty_name_is_refused(string name)
+    {
+        Assert.Throws<ArgumentException>(() => New().AddOrSelect(name));
+    }
+
+    /// <summary>
+    /// An import with no tags would read the file, resolve every host, and change nothing — an
+    /// outcome an operator would read as the import having failed.
+    /// </summary>
+    [Fact]
+    public void At_least_one_tag_is_required_and_the_reason_says_so()
+    {
+        var model = New("pilot");
+
+        Assert.False(model.CanApply);
+        Assert.Contains("Select at least one tag", model.BlockingReason!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void With_no_tags_at_all_the_reason_points_at_creating_one()
+    {
+        var model = New();
+
+        Assert.True(model.HasNoTags);
+        Assert.Contains("Create one", model.BlockingReason!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Choosing_a_tag_clears_the_blocking_reason()
+    {
+        var model = New("pilot");
+        model.SetSelected("pilot", true);
+
+        Assert.Null(model.BlockingReason);
+    }
+
+    [Theory]
+    [InlineData(new[] { "pilot" }, "'pilot' will be applied")]
+    [InlineData(new[] { "pilot", "rodc" }, "2 tags will be applied")]
+    public void The_summary_describes_what_will_happen(string[] chosen, string expected)
+    {
+        var model = New("pilot", "rodc");
+
+        foreach (var tag in chosen)
+        {
+            model.SetSelected(tag, true);
+        }
+
+        Assert.Contains(expected, model.Describe(0), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Selection_order_follows_the_listing_not_the_clicking()
+    {
+        var model = New("alpha", "zulu");
+
+        model.SetSelected("zulu", true);
+        model.SetSelected("alpha", true);
+
+        Assert.Equal(["alpha", "zulu"], model.Selected);
+    }
+}
+
+/// <summary>
+/// The connection between the tag list control and the model behind it.
+/// </summary>
+/// <remarks>
+/// Testing the model alone would leave the wiring unverified — and the wiring is what decides
+/// which tags an import actually applies. Driving the real control with synthetic mouse and
+/// keyboard messages proved unreliable, so the binding is exercised directly instead.
+/// </remarks>
+public sealed class TagSelectionBindingTests
+{
+    [Fact]
+    public void Ticking_an_item_selects_that_tag()
+    {
+        using var fixture = new BindingFixture("pilot", "rodc");
+
+        fixture.List.SetItemChecked(0, true);
+
+        Assert.Equal(["pilot"], fixture.Model.Selected);
+        Assert.True(fixture.Model.CanApply);
+    }
+
+    [Fact]
+    public void Unticking_an_item_deselects_that_tag()
+    {
+        using var fixture = new BindingFixture("pilot", "rodc");
+        fixture.List.SetItemChecked(0, true);
+
+        fixture.List.SetItemChecked(0, false);
+
+        Assert.Empty(fixture.Model.Selected);
+        Assert.False(fixture.Model.CanApply);
+    }
+
+    [Fact]
+    public void Several_items_can_be_ticked()
+    {
+        using var fixture = new BindingFixture("pilot", "rodc", "london");
+
+        fixture.List.SetItemChecked(0, true);
+        fixture.List.SetItemChecked(2, true);
+
+        // Listed alphabetically: london, pilot, rodc.
+        Assert.Equal(["london", "rodc"], fixture.Model.Selected);
+    }
+
+    /// <summary>
+    /// The caller is told when the selection changes, which is what re-enables the Apply
+    /// button and updates the summary.
+    /// </summary>
+    [Fact]
+    public void The_change_callback_fires_when_an_item_is_ticked()
+    {
+        using var fixture = new BindingFixture("pilot");
+
+        fixture.List.SetItemChecked(0, true);
+
+        Assert.True(fixture.Changed);
+    }
+
+    private sealed class BindingFixture : IDisposable
+    {
+        public BindingFixture(params string[] tags)
+        {
+            Model = new TagSelectionModel(tags.Select(t => new TagSummary(t, 0)));
+            List = new CheckedListBox();
+
+            foreach (var choice in Model.Choices)
+            {
+                List.Items.Add(choice, false);
+            }
+
+            TagSelectionDialog.BindList(List, Model, () => Changed = true);
+        }
+
+        public TagSelectionModel Model { get; }
+
+        public CheckedListBox List { get; }
+
+        public bool Changed { get; private set; }
+
+        public void Dispose() => List.Dispose();
+    }
 }

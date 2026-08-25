@@ -53,7 +53,7 @@ public sealed class EndToEndDeploymentTests
         try
         {
             // A real inventory database, migrated from empty exactly as a first run would.
-            var connections = new SqliteConnectionFactory(Path.Combine(workspace, "inventory.db"));
+            var connections = new SqliteConnectionFactory(Path.Combine(workspace, "inventory.db"), pooling: false);
             await new SchemaMigrator(connections).MigrateAsync(Ct);
 
             var domainControllers = new DomainControllerRepository(connections);
@@ -128,7 +128,9 @@ public sealed class EndToEndDeploymentTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            // Nothing to release: the factory above does not pool, so closing a connection
+            // frees the file. ClearAllPools would be process-wide and is not this test's to
+            // call.
         }
     }
 

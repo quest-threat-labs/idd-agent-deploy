@@ -19,13 +19,104 @@ Windows only. Not Linux, not macOS, not WSL — the solution needs the Windows D
 targeting pack, and `System.DirectoryServices.ActiveDirectory` plus the `msi.dll` interop
 are Windows-only at runtime.
 
+Targets `net10.0-windows`, x64.
+
+### Prerequisites
+
+| What | How | Why |
+|---|---|---|
+| Windows | x64, able to run the .NET 10 SDK | The machine you build on. It does not have to be domain-joined — nothing in the build touches Active Directory. |
+| .NET SDK 10 | `winget install Microsoft.DotNet.SDK.10` | Includes the Windows Desktop targeting pack. The solution is a `.slnx` file, which needs SDK 9.0.200 or newer regardless. |
+| Git | `winget install Git.Git` | Any recent version. |
+
+Visual Studio is **not** required — the whole build runs on the SDK's command line. If you
+have it, 17.13 or newer opens `.slnx`; older versions will not.
+
+Building needs no elevation. Open an ordinary PowerShell window, not an administrator one.
+
+### Step by step
+
+**1. Confirm the tools are on your PATH.** Open a *new* PowerShell window first — an
+installer that just ran will not have updated the PATH of a window opened before it.
+
 ```powershell
-dotnet build
-dotnet test --filter "Category!=Integration"    # default test run
-dotnet test --filter "Category=Integration"     # requires a lab forest; see below
+dotnet --list-sdks     # expect 10.0.x or later listed
+git --version
 ```
 
-Targets `net10.0-windows`, x64. Verify with `dotnet --list-sdks`.
+**2. Clone the repository — somewhere with a short path.**
+
+```powershell
+mkdir $HOME\source\repos -Force | Out-Null    # or anywhere writable, as long as it is shallow
+cd $HOME\source\repos
+git clone https://github.com/matthewvinton/idd-agent-deploy.git
+cd idd-agent-deploy
+```
+
+**Keep the repository root under about 80 characters** — `C:\Users\you\source\repos\idd-agent-deploy`
+is comfortable. `Microsoft.PowerShell.SDK` copies its module tree into every project's output,
+and the longest path it produces is 175 characters *below the repository root*:
+
+```
+tests\HybridAgentDeploy.Core.IntegrationTests\bin\Debug\net10.0-windows\runtimes\win\lib\net10.0\Modules\Microsoft.PowerShell.Diagnostics\Microsoft.PowerShell.Diagnostics.psd1
+```
+
+Against Windows' 260-character limit that leaves roughly 84 characters for the root. Clone
+somewhere deeper — a nested folder under `Downloads`, a redirected `Documents` on a UNC path
+— and the build fails partway through with a wall of `error MSB3021: ... exceeds the OS max
+path limit`. Nothing is wrong with the clone; move it somewhere shallower and build again.
+
+**3. Build.** Restore happens automatically as part of the build.
+
+```powershell
+dotnet build
+```
+
+The first build is much slower than the ones after it: `Microsoft.PowerShell.SDK` has a
+large transitive dependency tree that has to come down from nuget.org. Later builds compile
+from the local package cache in seconds. Expect `Build succeeded. 0 Warning(s) 0 Error(s)` —
+warnings are errors here, by `Directory.Build.props`, so a clean build really is clean.
+
+**4. Run the tests.**
+
+```powershell
+dotnet test --filter "Category!=Integration"
+```
+
+Everything except the `Integration` trait runs on a standalone laptop with no domain and no
+MSI, and all of it should pass. The run prints `No test matches the given testcase filter`
+for `HybridAgentDeploy.Core.IntegrationTests` — that assembly is *entirely* integration
+tests, so the filter correctly leaves it empty. That line is expected, not a failure.
+
+The integration tests need a lab forest and are covered under [Lab tests](#lab-tests). Do
+not run them against production domain controllers.
+
+**5. Run what you built.** The two programs land in separate project output folders:
+
+```powershell
+.\src\HybridAgentDeploy.Cli\bin\x64\Debug\net10.0-windows\hadeploy.exe --help
+.\src\HybridAgentDeploy.Gui\bin\x64\Debug\net10.0-windows\HybridAgentDeploy.exe
+```
+
+Or through the SDK, which rebuilds first if anything changed:
+
+```powershell
+dotnet run --project src\HybridAgentDeploy.Cli -- --help
+```
+
+The `--` matters: it separates `dotnet run`'s own arguments from the ones passed to
+`hadeploy`.
+
+A debug build is for working on the tool. What you hand to an operator is the published
+bundle — see [Packaging](#packaging):
+
+```powershell
+.\tools\publish.ps1            # unsigned, for lab use
+```
+
+If PowerShell's execution policy blocks that script, run it as
+`powershell -ExecutionPolicy Bypass -File .\tools\publish.ps1` rather than loosening the
+policy for the machine.
 
 ## Layout
 

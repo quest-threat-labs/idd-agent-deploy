@@ -394,3 +394,9 @@ The Phase 6 acceptance checklist is [`docs/phase-6-acceptance.md`](docs/phase-6-
 | 4 | CLI | Complete (live deploy acceptance run deferred) |
 | 5 | WinForms GUI | Complete (manual test matrix outstanding) |
 | 6 | Packaging and signing | Built; acceptance run on TitancorpNPV02 outstanding, signing deferred (Q3) |
+
+## License
+
+The Quest Software open-source license: the MIT permission grant, plus a clause forbidding
+removal of the notice, the US export-control certifications, and a trademark notice. Full
+text in [`LICENSE`](LICENSE); copyright © 2026 Quest Software Inc.

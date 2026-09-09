@@ -19,13 +19,175 @@ Windows only. Not Linux, not macOS, not WSL — the solution needs the Windows D
 targeting pack, and `System.DirectoryServices.ActiveDirectory` plus the `msi.dll` interop
 are Windows-only at runtime.
 
+Targets `net10.0-windows`, x64.
+
+### Prerequisites
+
+| What | How | Why |
+|---|---|---|
+| Windows | x64, able to run the .NET 10 SDK | The machine you build on. It does not have to be domain-joined — nothing in the build touches Active Directory. |
+| .NET SDK 10 | `winget install Microsoft.DotNet.SDK.10` | Includes the Windows Desktop targeting pack. The solution is a `.slnx` file, which needs SDK 9.0.200 or newer regardless. |
+| Git | `winget install Git.Git` | Any recent version. |
+
+Visual Studio is **not** required — the whole build runs on the SDK's command line. If you
+have it, 17.13 or newer opens `.slnx`; older versions will not.
+
+Building needs no elevation. Open an ordinary PowerShell window, not an administrator one.
+
+### Step by step
+
+**1. Confirm the tools are on your PATH.** Open a *new* PowerShell window first — an
+installer that just ran will not have updated the PATH of a window opened before it.
+
 ```powershell
-dotnet build
-dotnet test --filter "Category!=Integration"    # default test run
-dotnet test --filter "Category=Integration"     # requires a lab forest; see below
+dotnet --list-sdks     # expect 10.0.x or later listed
+git --version
 ```
 
-Targets `net10.0-windows`, x64. Verify with `dotnet --list-sdks`.
+**2. Clone the repository — somewhere with a short path.**
+
+```powershell
+mkdir $HOME\source\repos -Force | Out-Null    # or anywhere writable, as long as it is shallow
+cd $HOME\source\repos
+git clone https://github.com/matthewvinton/idd-agent-deploy.git
+cd idd-agent-deploy
+```
+
+**Keep the repository root under about 80 characters** — `C:\Users\you\source\repos\idd-agent-deploy`
+is comfortable. `Microsoft.PowerShell.SDK` copies its module tree into every project's output,
+and the longest path it produces is 175 characters *below the repository root*:
+
+```
+tests\HybridAgentDeploy.Core.IntegrationTests\bin\Debug\net10.0-windows\runtimes\win\lib\net10.0\Modules\Microsoft.PowerShell.Diagnostics\Microsoft.PowerShell.Diagnostics.psd1
+```
+
+Against Windows' 260-character limit that leaves roughly 84 characters for the root. Clone
+somewhere deeper — a nested folder under `Downloads`, a redirected `Documents` on a UNC path
+— and the build fails partway through with a wall of `error MSB3021: ... exceeds the OS max
+path limit`. Nothing is wrong with the clone; move it somewhere shallower and build again.
+
+**3. Build.** Restore happens automatically as part of the build.
+
+```powershell
+dotnet build
+```
+
+The first build is much slower than the ones after it: `Microsoft.PowerShell.SDK` has a
+large transitive dependency tree that has to come down from nuget.org. Later builds compile
+from the local package cache in seconds. Expect `Build succeeded. 0 Warning(s) 0 Error(s)` —
+warnings are errors here, by `Directory.Build.props`, so a clean build really is clean.
+
+**4. Run the tests.**
+
+```powershell
+dotnet test --filter "Category!=Integration"
+```
+
+Everything except the `Integration` trait runs on a standalone laptop with no domain and no
+MSI, and all of it should pass. The run prints `No test matches the given testcase filter`
+for `HybridAgentDeploy.Core.IntegrationTests` — that assembly is *entirely* integration
+tests, so the filter correctly leaves it empty. That line is expected, not a failure.
+
+The integration tests need a lab forest and are covered under [Lab tests](#lab-tests). Do
+not run them against production domain controllers.
+
+**5. Run what you built.** The two programs land in separate project output folders:
+
+```powershell
+.\src\HybridAgentDeploy.Cli\bin\x64\Debug\net10.0-windows\hadeploy.exe --help
+.\src\HybridAgentDeploy.Gui\bin\x64\Debug\net10.0-windows\HybridAgentDeploy.exe
+```
+
+Or through the SDK, which rebuilds first if anything changed:
+
+```powershell
+dotnet run --project src\HybridAgentDeploy.Cli -- --help
+```
+
+The `--` matters: it separates `dotnet run`'s own arguments from the ones passed to
+`hadeploy`.
+
+A debug build is for working on the tool. What you hand to an operator is the published
+bundle — see [Packaging](#packaging):
+
+```powershell
+.\tools\publish.ps1            # unsigned, for lab use
+```
+
+If PowerShell's execution policy blocks that script, run it as
+`powershell -ExecutionPolicy Bypass -File .\tools\publish.ps1` rather than loosening the
+policy for the machine.
+
+## What the executables need to run
+
+Two different answers, depending on which build you are handing over.
+
+### The published bundle — nothing
+
+`.\tools\publish.ps1` produces a self-contained `win-x64` build: the .NET runtime ships
+inside the folder. Its `HybridAgentDeploy.runtimeconfig.json` lists `includedFrameworks`
+rather than `frameworks`, which is what "self-contained" looks like on disk.
+
+On a 64-bit Windows machine, copy the folder and run it. Specifically **not** required:
+
+- **No .NET runtime.** Both `Microsoft.NETCore.App` and `Microsoft.WindowsDesktop.App` are
+  in the folder.
+- **No Visual C++ redistributable.** The native libraries it carries — `e_sqlite3.dll`,
+  `sni.dll`, `pwrshplugin.dll`, `coreclr.dll` — import no `vcruntime140`/`msvcp140`.
+- **No PowerShell modules, and no PowerShell 7.** `Microsoft.PowerShell.SDK` is linked in as
+  the WinRM *client*; every remote script runs in the target DC's own Windows PowerShell.
+- **No SQLite install.** `e_sqlite3.dll` is in the folder.
+- **No local administrator rights on the jump host**, and no elevation. Nothing is installed
+  locally; the database and logs go to `%LOCALAPPDATA%`. The privileged rights this tool
+  needs are on the *targets*, not here.
+- **No agent MSI in the folder.** You point the tool at your own copy — the bundle
+  deliberately does not carry one.
+
+`msi.dll` and the Windows Installer service, used to read the MSI's properties, are in-box on
+every supported Windows version.
+
+**Copy the whole folder**, not just the `.exe`. The apphost without the runtime beside it
+will not start.
+
+### A debug build — the .NET Desktop Runtime
+
+`dotnet build` output is framework-dependent (`frameworks`, not `includedFrameworks`), so it
+needs a matching runtime installed. On the machine you built on, the SDK already provides
+one and there is nothing to do. Copy `bin\` to a machine without the SDK and install:
+
+```powershell
+winget install Microsoft.DotNet.DesktopRuntime.10
+```
+
+The **Desktop** runtime, not the plain one: the GUI's runtimeconfig requires
+`Microsoft.WindowsDesktop.App`. `hadeploy.exe` alone needs only `Microsoft.NETCore.App`, but
+the Desktop runtime contains that too, so one install covers both programs.
+
+This is a development convenience. What goes to an operator is the published bundle.
+
+### The machine it runs from
+
+| What | Why |
+|---|---|
+| 64-bit Windows | Windows 10/11 or Windows Server. |
+| Desktop Experience — **for the GUI only** | `HybridAgentDeploy.exe` is WinForms and needs a desktop shell. On Server Core, use `hadeploy.exe`, which is what it is there for. |
+| Domain-joined, or able to obtain Kerberos tickets for the targets | AD enumeration goes through `System.DirectoryServices.ActiveDirectory` against the forest the workstation can see. |
+| An account with local administrator rights on the target DCs | Either the logged-on identity or an alternate account supplied at run time. Not needed to *start* the tool — only to deploy. |
+| The agent MSI | Not shipped with the tool. |
+
+### Each target domain controller
+
+Per PRD §4, and checked by `test-connectivity` before you commit to a run:
+
+| What | Why |
+|---|---|
+| **TCP 445** (SMB) reachable, with the `C$` administrative share writable | The MSI is staged to `C:\Windows\Temp\HybridAgentDeploy` over SMB, and its SHA-256 verified there, before anything executes. |
+| **TCP 5985** (WinRM over HTTP), or **5986** with `--use-https` | Enabled by default on Windows Server 2012 and later. |
+| Windows Server 2016 or later | The agent's own installer refuses anything older. |
+
+**No agent-side prerequisite is installed by this tool, and no DC setting is changed** other
+than installing the agent itself. CredSSP is neither required nor offered — staging the MSI
+locally on each target is precisely what avoids needing it.
 
 ## Layout
 
@@ -394,3 +556,9 @@ The Phase 6 acceptance checklist is [`docs/phase-6-acceptance.md`](docs/phase-6-
 | 4 | CLI | Complete (live deploy acceptance run deferred) |
 | 5 | WinForms GUI | Complete (manual test matrix outstanding) |
 | 6 | Packaging and signing | Built; acceptance run on TitancorpNPV02 outstanding, signing deferred (Q3) |
+
+## License
+
+The Quest Software open-source license: the MIT permission grant, plus a clause forbidding
+removal of the notice, the US export-control certifications, and a trademark notice. Full
+text in [`LICENSE`](LICENSE); copyright © 2026 Quest Software Inc.

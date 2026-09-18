@@ -81,11 +81,18 @@ internal sealed class HistoryTab : UserControl
         _fqdnByDcId = (await _main.DomainControllers.GetAllAsync(includeInactive: true, CancellationToken.None))
             .ToDictionary(dc => dc.Id, dc => dc.Fqdn);
 
+        // Cleared before the runs are added, not after: adding the first run row selects it,
+        // which loads that run's results. Clearing afterwards would discard them.
+        _results.Rows.Clear();
+        _export.Enabled = false;
+        _openLog.Enabled = false;
+
         _runs.Rows.Clear();
 
         foreach (var run in _runRecords)
         {
-            var index = _runs.Rows.AddRow(
+            var index = _runs.AddTaggedRow(
+                run,
                 InventoryTab.FormatUtc(run.StartedUtc),
                 run.OperatorAccount,
                 run.MsiProductVersion,
@@ -95,18 +102,12 @@ internal sealed class HistoryTab : UserControl
                 run.FailureCount,
                 run.WasHalted ? "yes" : string.Empty);
 
-            _runs.Rows[index].Tag = run;
-
             if (run.WasHalted)
             {
                 _runs.Rows[index].Cells["halted"].Style.BackColor = Color.FromArgb(253, 231, 233);
                 _runs.Rows[index].Cells["halted"].Style.ForeColor = Color.FromArgb(140, 20, 30);
             }
         }
-
-        _results.Rows.Clear();
-        _export.Enabled = false;
-        _openLog.Enabled = false;
     }
 
     private async Task OnRunSelectedAsync()
@@ -124,7 +125,8 @@ internal sealed class HistoryTab : UserControl
         {
             var appearance = OutcomeStyle.For(result.Outcome);
 
-            var index = _results.Rows.AddRow(
+            var index = _results.AddTaggedRow(
+                result,
                 _fqdnByDcId.GetValueOrDefault(result.DcId, $"(dc id {result.DcId})"),
                 appearance.Text,
                 result.ExitCode,
@@ -132,7 +134,6 @@ internal sealed class HistoryTab : UserControl
                 result.AttemptCount,
                 result.ErrorDetail);
 
-            _results.Rows[index].Tag = result;
             _results.Rows[index].Cells["outcome"].Style.BackColor = appearance.BackColor;
             _results.Rows[index].Cells["outcome"].Style.ForeColor = appearance.ForeColor;
         }
